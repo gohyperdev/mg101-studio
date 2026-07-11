@@ -9,13 +9,14 @@
 //! (`read_slot`/`write_slot`/`read_bank`) i codec wchodzą w E1/E2.
 
 use mg101_device_link::DeviceLink;
+use serde::{Deserialize, Serialize};
 
 /// Identyfikator banku pamięci urządzenia (np. `"user"`, `"factory"`).
 pub type BankId = String;
 
 /// Adres slotu: para (bank, indeks). Uniwersalny dla dowolnej topologii —
 /// dwa banki × 36 (MG-101), płaska lista 128, banki A/B/C/D itd.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SlotAddr {
     /// Bank, do którego należy slot.
     pub bank: BankId,

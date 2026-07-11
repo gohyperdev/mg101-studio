@@ -251,13 +251,16 @@ name = "mg101-device-pack-api"
 version = "0.1.0"
 dependencies = [
  "mg101-device-link",
+ "serde",
 ]
 
 [[package]]
 name = "mg101-library"
 version = "0.1.0"
 dependencies = [
- "mg101-core",
+ "mg101-device-pack-api",
+ "serde",
+ "sha2",
 ]
 
 [[package]]

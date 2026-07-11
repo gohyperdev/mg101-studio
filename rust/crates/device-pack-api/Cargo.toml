@@ -9,6 +9,7 @@ license.workspace = true
 # abstrakcji — nigdy od konkretnego urządzenia (ADR-0002, HLD §2).
 [dependencies]
 mg101-device-link = { path = "../device-link" }
+serde = { version = "1", features = ["derive"] }
 
 [lib]
 name = "mg101_device_pack_api"
