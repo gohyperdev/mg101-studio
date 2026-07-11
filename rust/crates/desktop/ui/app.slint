@@ -31,6 +31,8 @@ export struct BlockRowUi {
     params: [ParamRowUi],
     models: [string],   // nazwy modeli dostępnych w bloku (picker)
     model-index: int,   // indeks aktywnego modelu w `models`
+    image: image,       // grafika modelu (pusta gdy brak; ładowana w runtime)
+    has-image: bool,
 }
 
 export struct ChatRowUi {
@@ -385,6 +387,13 @@ export component AppWindow inherits Window {
                                 padding: 8px;
                                 spacing: 4px;
                                 HorizontalBox {
+                                    // Grafika modelu (W4) — ładowana lokalnie, gdy jest.
+                                    if blk.has-image: Image {
+                                        source: blk.image;
+                                        width: 56px;
+                                        height: 44px;
+                                        image-fit: contain;
+                                    }
                                     Text {
                                         text: blk.block;
                                         color: white;

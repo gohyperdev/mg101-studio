@@ -92,6 +92,21 @@ fn empty_detail() -> DetailUi {
     }
 }
 
+/// Katalog obrazów modeli (poza repo — IP; wypełniany `tools/extract_quicktone_images.py`).
+fn model_images_dir() -> std::path::PathBuf {
+    app_data_dir().join("model-images")
+}
+
+/// Ładuje grafikę modelu `<blok>_<model_id>.png` z lokalnego katalogu, jeśli jest.
+/// Brak pliku to normalny przypadek (efekty bez zdjęcia, brak ekstrakcji) → `None`.
+fn model_image(block: &str, model_id: i64) -> Option<slint::Image> {
+    let path = model_images_dir().join(format!("{block}_{model_id}.png"));
+    if !path.exists() {
+        return None;
+    }
+    slint::Image::load_from_path(&path).ok()
+}
+
 /// Buduje widok szczegółów patcha, dociągając modele bloków (picker) z VM.
 fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
     let blocks: Vec<BlockRowUi> = d
@@ -116,6 +131,11 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
             let opts = vm.models(&b.block);
             let names: Vec<SharedString> = opts.iter().map(|o| o.name.clone().into()).collect();
             let idx = opts.iter().position(|o| o.id == b.model_id).unwrap_or(0) as i32;
+            // Grafika modelu (W4): plik lokalny `<moduł>_<model_id>.png` (poza repo).
+            let (image, has_image) = match model_image(&b.block, b.model_id) {
+                Some(img) => (img, true),
+                None => (slint::Image::default(), false),
+            };
             BlockRowUi {
                 block: b.block.clone().into(),
                 model_name: b.model_name.clone().into(),
@@ -123,6 +143,8 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                 params: ModelRc::new(VecModel::from(params)),
                 models: ModelRc::new(VecModel::from(names)),
                 model_index: idx,
+                image,
+                has_image,
             }
         })
         .collect();

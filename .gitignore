@@ -5,3 +5,7 @@ dist/
 **/.DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Obrazy modeli wyekstrahowane z QuickTone — własność NUX/Cherub, NIE commitować (W4).
+model-images/
+**/model-images/

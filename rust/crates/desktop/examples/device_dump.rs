@@ -6,7 +6,10 @@ use mg101_desktop::device::{detect, DumpMsg, Dumper};
 
 fn main() {
     match detect() {
-        Some(d) => println!("Wykryto: {} {} (port ~'{}')", d.manufacturer, d.model, d.port_needle),
+        Some(d) => println!(
+            "Wykryto: {} {} (port ~'{}')",
+            d.manufacturer, d.model, d.port_needle
+        ),
         None => {
             eprintln!("Brak urządzenia (żaden port MIDI nie pasuje do rejestru).");
             std::process::exit(1);
@@ -34,7 +37,11 @@ fn main() {
                         occ(&factory),
                     );
                     if let Some(s) = user.first() {
-                        println!("  User[0] blob {} B, pierwsze 8: {:02X?}", s.blob.len(), &s.blob[..8.min(s.blob.len())]);
+                        println!(
+                            "  User[0] blob {} B, pierwsze 8: {:02X?}",
+                            s.blob.len(),
+                            &s.blob[..8.min(s.blob.len())]
+                        );
                     }
                     return;
                 }
