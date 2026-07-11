@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "nux.mg101",
+  "displayName": "NUX MG-101",
+  "recordSize": 8402,
+  "patchName": {"offset": 109, "length": 16},
+  "bpm": {"msbOffset": 95, "lsbOffset": 96, "minimum": 40, "maximum": 300},
+  "blocks": [
+    {"id":"wah","displayName":"WAH","selectorOffset":4,"parameterOffsets":[17,18]},
+    {"id":"cmp","displayName":"CMP","selectorOffset":5,"parameterOffsets":[20,21,22,23]},
+    {"id":"efx","displayName":"EFX","selectorOffset":6,"parameterOffsets":[25,26,27,28,29,30]},
+    {"id":"amp","displayName":"AMP","selectorOffset":7,"parameterOffsets":[32,33,34,35,36,37,38,39]},
+    {"id":"eq","displayName":"EQ","selectorOffset":8,"parameterOffsets":[41,42,43,44,45,46,47,48,49,50,51,52]},
+    {"id":"gate","displayName":"NR","selectorOffset":9,"parameterOffsets":[54,55,56,57]},
+    {"id":"mod","displayName":"MOD","selectorOffset":10,"parameterOffsets":[59,60,61,62,63,64]},
+    {"id":"dly","displayName":"DLY","selectorOffset":11,"parameterOffsets":[66,67,68,69,70,71,72,73]},
+    {"id":"rvb","displayName":"RVB","selectorOffset":12,"parameterOffsets":[75,76,77,78]},
+    {"id":"cab","displayName":"CAB","selectorOffset":13,"parameterOffsets":[80,81,82,83,84,85]},
+    {"id":"sr","displayName":"P.L","selectorOffset":14,"parameterOffsets":[90,91,92,93]}
+  ],
+  "namedFields": {
+    "send":{"offset":87,"minimum":0,"maximum":100},
+    "return":{"offset":88,"minimum":0,"maximum":100},
+    "patch.min":{"offset":90,"minimum":0,"maximum":100},
+    "patch.max":{"offset":91,"minimum":0,"maximum":100},
+    "patch.level":{"offset":92,"minimum":0,"maximum":100},
+    "patch.position":{"offset":93,"minimum":0,"maximum":1}
+  }
+}

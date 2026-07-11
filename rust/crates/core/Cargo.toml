@@ -8,6 +8,8 @@ license.workspace = true
 # pola globalne, załączniki IR) + rewizje/WAL/diff. Pisane raz, przeciw modelowi
 # kanonicznemu; kompilowalne natywnie i do wasm32 (ADR-0002).
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lib]
 name = "mg101_core"
