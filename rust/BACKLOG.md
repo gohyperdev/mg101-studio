@@ -52,8 +52,9 @@
   zamiast bezpośredniego indeksowania (parytet ze Swiftem, ale panic możliwy).
 - `patch_record.rs`: guard `record_size >= 0xA6` (underflow w `set_ir`).
 - `Container::split` → własny enum błędu zamiast `String`; dodać `join`.
-- Duplikacja `resources/*.json` vs `Sources/MG101Core/Resources/` — test/krok
-  build porównujący albo jedno źródło (ryzyko dryfu).
+- [x] Duplikacja `resources/*.json` vs `archive/swift-v1/Sources/MG101Core/
+  Resources/` — po E9 (archiwizacja Swift v1) ryzyko dryfu zamknięte: archiwum
+  jest zamrożone, źródłem prawdy jest `rust/crates/pack-nux-mg101/resources/`.
 
 ## Do E2 (przed pracą na żywym sprzęcie) — ZROBIONE
 - [x] `SysexAssembler`: realtime passthrough, przerwanie uciętego SysEx (+testy).
@@ -86,7 +87,8 @@
   blob jako tablica). NIE jest wstecznie zgodny z JSONL v1 (`timestamp` Double
   epoka-2001, camelCase, base64). Decyzja: dziennik WAL jest efemeryczny
   (sesyjny stan crash-recovery), upgrade in-place startuje czysty dziennik —
-  brak migracji zawieszonej transakcji v1. Potwierdzić przy retire v1 (E9).
+  brak migracji zawieszonej transakcji v1. [x] POTWIERDZONE przy E9 —
+  udokumentowane w `archive/swift-v1/README.md` (brak migracji WAL v1→v2).
 - `session_inverses` cofa WSZYSTKIE zawieszone wpisy; v1 tylko ostatnią linię.
   Świadome odstępstwo — potwierdzić przy porcie StudioState (E4).
 - Duplikacja `Kind`/nazw między `Command` a `ToolDefinition` — dodać test

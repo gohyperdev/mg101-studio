@@ -68,25 +68,37 @@ Przełącznik **Hex / Decimal** zmienia sposób prezentacji offsetów i wartośc
 liczbowych w obu trybach. Zakresy zawierające zmiany względem wersji bazowej są
 wyróżnione.
 
-## Budowanie
+## Budowanie (Rust — aktywna implementacja)
 
 ```sh
+cd rust
+cargo build --workspace          # rdzeń + biblioteka + agent + MCP + desktop
+cargo run -p mg101-desktop       # aplikacja desktop (Slint)
+cargo run -p mg101-mcp           # serwer MCP po stdio (rmcp)
+```
+
+Bramka jakości (jak w CI, macOS + Windows):
+
+```sh
+cd rust
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+```
+
+<details><summary>Archiwalny build Swift v1 (zarchiwizowany, nie rozwijany)</summary>
+
+```sh
+cd archive/swift-v1
 swift test
 scripts/build-app.sh
 open dist/MG101Studio.app
 ```
 
-Wynik:
-
-```text
-dist/MG101Studio.app
-├── Contents/MacOS/MG101Studio
-├── Contents/MacOS/MG101MCP
-└── Contents/Resources/MG101Studio_MG101Core.bundle
-```
-
 Skrypt buduje oba programy dla `arm64`, tworzy pakiet `.app`, wykonuje podpis
 ad-hoc i sprawdza podpis.
+
+</details>
 
 ## Konfiguracja profilu
 
@@ -168,14 +180,15 @@ tymczasowy i atomowe przeniesienie do nowej ścieżki.
 ## Weryfikacja
 
 ```sh
-swift test
-file dist/MG101Studio.app/Contents/MacOS/MG101Studio
-file dist/MG101Studio.app/Contents/MacOS/MG101MCP
-codesign --verify --deep --strict dist/MG101Studio.app
+cd rust
+cargo test --workspace           # 178 testów (rdzeń, biblioteka, transfer, agent, MCP, desktop)
+cargo run -p mg101-pack-nux-mg101 --example roundtrip_proof   # round-trip 1:1 36/36, 0 różnic
 ```
 
-Test smoke MCP powinien negocjować protokół `2025-11-25`, zwrócić dziesięć
-narzędzi i utworzyć poprawną kopię patcha bez modyfikacji pliku źródłowego.
+Smoke MCP: uruchom `cargo run -p mg101-mcp` i wykonaj sesję JSON-RPC po stdio
+(initialize → tools/list → tools/call). Serwer neguje protokół, listuje narzędzia
+wariantu plikowego i tworzy kopię patcha bez modyfikacji pliku źródłowego
+(idempotentna odmowa nadpisania).
 
 ## Status projektu
 
