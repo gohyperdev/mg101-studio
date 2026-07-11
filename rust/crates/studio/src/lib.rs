@@ -88,8 +88,6 @@ pub struct Studio<'p, S: LibraryStore> {
     journal: Option<Box<dyn JournalStore>>,
     /// Poczekalnia soft-delete (dla RestoreFromStaging przy revert).
     staging: BTreeMap<PatchId, LibraryPatch>,
-    /// Katalogi zatwierdzone do operacji plikowych (sandbox, jak agent-core).
-    approved_roots: Vec<String>,
 }
 
 impl<'p, S: LibraryStore> Studio<'p, S> {
@@ -115,7 +113,6 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             now_ms,
             journal: None,
             staging: BTreeMap::new(),
-            approved_roots: Vec::new(),
         }
     }
 
@@ -125,9 +122,14 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         self
     }
 
-    /// Zatwierdza katalog do operacji plikowych (sandbox).
-    pub fn approve_root(&mut self, root: impl Into<String>) {
-        self.approved_roots.push(root.into());
+    /// Czyści zaznaczenie, jeśli wskazuje na patch, którego już nie ma
+    /// (po delete/revert) — inaczej get_selection zwróciłby martwe ID (review E6/W4).
+    fn fix_selection(&mut self) {
+        if let Some(id) = &self.selected_patch {
+            if self.store.get(id).is_none() {
+                self.selected_patch = None;
+            }
+        }
     }
 
     /// Dostęp do składu (dla testów / warstwy wyżej).
@@ -429,6 +431,13 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
     {
         let (patch_id, revision) = library_target(target)?;
         let mut item = self.get_patch(&patch_id)?;
+        // Kontrola rewizji PRZED wpisem WAL (review E6/K2): konflikt nie może
+        // zostawić osieroconego wpisu `prepared`, który zatruje revert_session.
+        if item.revision != revision {
+            return Err(ExecError::Conflict {
+                current_revision: item.revision,
+            });
+        }
         let before_blob = item.blob.clone();
         let before_hash = sha256_hex(&before_blob);
 
@@ -436,7 +445,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         edit(&mut rec, self.profile, self.catalog)?;
         let new_blob = rec.data().to_vec();
 
-        // Brak realnej zmiany → nic nie robimy (parytet v1).
+        // Brak realnej zmiany → nic nie robimy (po kontroli rewizji, parytet v1).
         if new_blob == before_blob {
             return Ok(json!({"success": true, "revision": item.revision}));
         }
@@ -555,6 +564,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
 
         entry.state = EntryState::Committed;
         self.journal_append(&entry)?;
+        self.fix_selection();
         Ok(json!({"success": true}))
     }
 
@@ -570,6 +580,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             .filter(|e| e.sequence != last.sequence)
             .collect();
         self.rewrite_journal(&filtered)?;
+        self.fix_selection();
         Ok(json!({"success": true}))
     }
 
@@ -598,6 +609,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             self.apply_inverse(inv, after_hash)?;
         }
         self.rewrite_journal(&[])?;
+        self.fix_selection();
         Ok(json!({"success": true}))
     }
 

@@ -62,12 +62,14 @@ fn command_paths(cmd: &Command) -> Vec<String> {
     }
 }
 
-/// Katalog nadrzędny ścieżki (do zatwierdzenia sandboxu po zgodzie użytkownika).
-fn parent_dir(path: &str) -> String {
-    match path.rfind('/') {
-        Some(0) => "/".to_string(),
-        Some(i) => path[..i].to_string(),
-        None => String::new(),
+/// Katalog nadrzędny znormalizowanej ścieżki absolutnej (do zatwierdzenia
+/// sandboxu). Zwraca `None` dla ścieżek względnych lub gdy rodzic to korzeń `/`
+/// (nie zatwierdzamy całego systemu plików — domknięcie K1 z review E6).
+fn parent_dir(path: &str) -> Option<String> {
+    let norm = crate::config::normalize_lexical(path)?;
+    match norm.rfind('/') {
+        Some(0) | None => None, // rodzic to „/” — za szeroki, nie zatwierdzamy
+        Some(i) => Some(norm[..i].to_string()),
     }
 }
 
@@ -158,9 +160,15 @@ fn execute_call<E: ToolExecutor, A: Authorizer>(
     match cmd.kind() {
         Kind::Filesystem => {
             for p in command_paths(&cmd) {
+                // Ścieżki muszą być absolutne i znormalizowane (blokada traversal).
+                let Some(parent) = parent_dir(&p) else {
+                    return err_result(format!(
+                        "Odrzucono ścieżkę '{p}': wymagana ścieżka absolutna bez '..'."
+                    ));
+                };
                 if !crate::config::is_path_approved(&p, approved_roots) {
                     if authorizer.authorize(&cmd) {
-                        approved_roots.push(parent_dir(&p));
+                        approved_roots.push(parent);
                     } else {
                         return err_result(format!("Odmowa dostępu do ścieżki '{p}'."));
                     }

@@ -107,6 +107,25 @@
 - `pull_slot`: 9 argumentów → struct parametrów. `TransferPlan` pola pub →
   re-walidacja w execute_push lub konstruktor zamknięty.
 
+## Z review E6 (naprawione lub zaplanowane)
+- [x] K1: sandbox ścieżek — normalizacja leksykalna (`..`/względne/pusty korzeń
+  odrzucane); regresja traversal vs v1 domknięta. +testy.
+- [x] K2: `mutate` sprawdza rewizję PRZED wpisem WAL (koniec osieroconych
+  `prepared` przy konflikcie, które psuły revert_session). +test.
+- [x] W4: `fix_selection()` po delete/revert (brak martwego selectedPatchID).
+- [x] W2: usunięto martwe `approved_roots`/`approve_root` ze Studio.
+- W1: `apply_inverse` podbija rewizję zamiast przywracać `revision_before` (v1) —
+  świadome (bezpieczniejsze dla współbieżności); udokumentować + test w E7.
+- W3: `get_diff` względem zerowego baseline (brak `original` w Bibliotece);
+  `list_patches` bez `isModified`. Dodać baseline (pole/hash oryginału) w E7.
+- W5: `compact_history` nie wpięte w `run()` — wpiąć przy transporcie HTTP (E6.3)
+  z progiem tokenów z konfiguracji.
+- W6: rozszerzenie `.mg101patch` zaszyte w studio — przenieść do profilu/packa
+  (pole `file_extension`), by studio było w pełni device-agnostyczne.
+- W7/W8: sanityzacja nazwy pliku w export (ucieczka `/`); potwierdzić odstępstwo
+  session_inverses (wszystkie dangling vs ostatnia linia v1) + port recovery
+  slotów; obie z E5-W3.
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.

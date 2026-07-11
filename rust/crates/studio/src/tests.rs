@@ -434,3 +434,55 @@ fn revert_without_journal_is_unsupported() {
     let err = s.execute(&Command::RevertSession).unwrap_err();
     assert!(matches!(err, ExecError::Unsupported(_)));
 }
+
+#[test]
+fn revision_conflict_leaves_no_orphan_wal_entry() {
+    // K2 (review E6): konflikt rewizji przy AKTYWNYM dzienniku nie może dopisać
+    // wpisu `prepared`, który zatruje revert_session.
+    let (mut s, journal) = studio_with_journal();
+    // Poprawna zmiana → 2 wpisy (prepared+committed), rewizja 2.
+    s.execute(&Command::SetName {
+        target: lib_target("p1", 1),
+        name: "OK".into(),
+    })
+    .unwrap();
+    assert_eq!(journal.entries.borrow().len(), 2);
+    // Konflikt (zła rewizja) → BRAK nowych wpisów.
+    let err = s
+        .execute(&Command::SetBpm {
+            target: lib_target("p1", 1), // powinno być 2
+            bpm: 120,
+        })
+        .unwrap_err();
+    assert!(matches!(err, ExecError::Conflict { .. }));
+    assert_eq!(
+        journal.entries.borrow().len(),
+        2,
+        "konflikt nie dopisał sieroty"
+    );
+    // revert_session działa (cofa zmianę nazwy) i czyści dziennik.
+    s.execute(&Command::RevertSession).unwrap();
+    assert!(journal.entries.borrow().is_empty());
+    let v = s
+        .execute(&Command::GetPatch {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
+    assert_eq!(v["name"].as_str().unwrap(), ""); // wróciło do stanu początkowego
+}
+
+#[test]
+fn delete_clears_dangling_selection() {
+    // W4 (review E6): po delete zaznaczony patch nie może wskazywać nieistniejącego.
+    let (mut s, _j) = studio_with_journal();
+    s.execute(&Command::SelectPatch {
+        patch_id: "p1".into(),
+    })
+    .unwrap();
+    s.execute(&Command::DeletePatch {
+        target: lib_target("p1", 1),
+    })
+    .unwrap();
+    let sel = s.execute(&Command::GetSelection).unwrap();
+    assert_eq!(sel["selectedPatchID"], serde_json::Value::Null);
+}

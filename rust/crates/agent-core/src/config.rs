@@ -96,13 +96,41 @@ fn trim_trailing_slash(s: &str) -> &str {
     s.strip_suffix('/').unwrap_or(s)
 }
 
+/// Normalizuje leksykalnie ścieżkę ABSOLUTNĄ (usuwa `.`/`..`/podwójne `/`).
+/// Zwraca `None` dla ścieżek względnych — te nigdy nie są w sandboxie (parytet z
+/// v1 `standardized.path`, ale odrzucamy względne zamiast kotwiczyć do CWD).
+/// `..` nie może wyjść ponad korzeń.
+pub fn normalize_lexical(path: &str) -> Option<String> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    let mut stack: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                stack.pop();
+            }
+            s => stack.push(s),
+        }
+    }
+    Some(format!("/{}", stack.join("/")))
+}
+
 /// Czy `path` mieści się w którymś z zatwierdzonych katalogów (port
-/// `isPathApproved`). Porównanie po normalizacji separatorów końcowych.
+/// `isPathApproved`). Obie strony są normalizowane leksykalnie; ścieżki względne
+/// i puste korzenie NIGDY nie pasują (domknięcie luki traversal z review E6/K1).
 pub fn is_path_approved(path: &str, approved_roots: &[String]) -> bool {
-    let p = trim_trailing_slash(path);
+    let Some(p) = normalize_lexical(path) else {
+        return false;
+    };
     approved_roots.iter().any(|root| {
-        let r = trim_trailing_slash(root);
-        p == r || p.starts_with(&format!("{r}/"))
+        match normalize_lexical(root) {
+            // Pusty/„/” korzeń nie zatwierdza wszystkiego automatycznie: wymagamy
+            // realnego prefiksu katalogu.
+            Some(r) if r != "/" => p == r || p.starts_with(&format!("{r}/")),
+            _ => false,
+        }
     })
 }
 
@@ -183,5 +211,26 @@ mod tests {
         assert!(is_path_approved("/home/user/patches", &roots));
         assert!(!is_path_approved("/home/user/patches-evil", &roots));
         assert!(!is_path_approved("/etc/passwd", &roots));
+    }
+
+    #[test]
+    fn path_traversal_and_relative_are_rejected() {
+        // Regresja K1 (review E6): normalizacja leksykalna blokuje `..` i ścieżki
+        // względne; pusty/„/” korzeń nie zatwierdza wszystkiego.
+        let roots = vec!["/data".to_string()];
+        assert!(!is_path_approved("/data/../etc/passwd", &roots));
+        assert!(is_path_approved("/data/./sub/x", &roots));
+        assert!(!is_path_approved("relative/x", &roots)); // względna
+                                                          // Pusty korzeń (z buga parent_dir) NIE zatwierdza wszystkiego.
+        assert!(!is_path_approved("/etc/passwd", &["".to_string()]));
+        assert!(!is_path_approved("/etc/passwd", &["/".to_string()]));
+    }
+
+    #[test]
+    fn normalize_lexical_resolves_dots() {
+        assert_eq!(normalize_lexical("/a/b/../c").as_deref(), Some("/a/c"));
+        assert_eq!(normalize_lexical("/a/./b//c").as_deref(), Some("/a/b/c"));
+        assert_eq!(normalize_lexical("/../../x").as_deref(), Some("/x")); // nie ucieka ponad /
+        assert!(normalize_lexical("relative").is_none());
     }
 }
