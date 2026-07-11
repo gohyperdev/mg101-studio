@@ -7,12 +7,14 @@
 //! [`LlmClient`]. Narzędzia generowane z rejestru komend (E3), spójne dla UI,
 //! agenta i MCP.
 
+mod compact;
 mod config;
 mod cost;
 mod run;
 mod types;
 mod wire;
 
+pub use compact::{compact_history, estimate_tokens};
 pub use config::{is_path_approved, normalize_endpoint, AgentConfig, Provider};
 pub use cost::{default_pricing, pricing_for, ModelPricing};
 pub use run::{run, AgentError, Authorizer, LlmClient, RunOutcome, ToolExecutor, MAX_ITERATIONS};

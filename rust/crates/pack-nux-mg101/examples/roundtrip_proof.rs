@@ -17,7 +17,11 @@ fn main() {
     let (profile, _catalog) = load().expect("profil MG-101");
 
     println!("Oracle: {oracle_path}");
-    println!("Rozmiar pliku: {} B, rozmiar rekordu: {} B", data.len(), profile.record_size);
+    println!(
+        "Rozmiar pliku: {} B, rozmiar rekordu: {} B",
+        data.len(),
+        profile.record_size
+    );
 
     let records = Container::split(&data, profile.record_size).expect("split na rekordy");
     let total = records.len();

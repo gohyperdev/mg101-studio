@@ -403,5 +403,16 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("120"));
+        // Dług v1 (dowód #8): pole musi być "function", NIE błędne "type" (bug v1).
+        assert_eq!(tc["type"], "function");
+    }
+
+    #[test]
+    fn openai_tool_schema_uses_function_type_not_type_bug() {
+        // Regresja bugu v1: openAIFormat emitował type:"type" — tu ma być "function".
+        let body = build_openai_body("m", "s", &[], Variant::File);
+        let tool0 = &body["tools"][0];
+        assert_eq!(tool0["type"], "function");
+        assert!(tool0["function"]["name"].is_string());
     }
 }
