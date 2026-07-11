@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 mg101-core = { path = "../core" }
 mg101-device-pack-api = { path = "../device-pack-api" }
+mg101-device-link = { path = "../device-link" }
 mg101-library = { path = "../library" }
 
 [lib]

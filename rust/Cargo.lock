@@ -356,6 +356,7 @@ name = "mg101-transfer-engine"
 version = "0.1.0"
 dependencies = [
  "mg101-core",
+ "mg101-device-link",
  "mg101-device-pack-api",
  "mg101-library",
 ]

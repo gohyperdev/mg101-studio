@@ -1,14 +1,15 @@
-//! Silnik transferu Biblioteka<->urzadzenie: push/pull/sync, transfer grupowy, limity, WAL (HLD sekcja 5). E5.
+//! Silnik transferu Biblioteka ↔ urządzenie (HLD §5). Generyczny — zależny tylko
+//! od [`DeviceStorage`]/[`DeviceProtocol`] (kontrakt packa) i [`LibraryStore`].
 //!
-//! E0: szkielet z realnym grafem zależności. Implementacja w kolejnych epikach.
+//! Podział: **planowanie** ([`plan`]) czyste i testowalne bez sprzętu; **wykonanie**
+//! ([`exec`]) używa protokołu i transportu za traitami (testowane mockiem).
+//! Zasada bezpieczeństwa zapisu (`mg101-probe`): odczyt swobodny, zapis pod
+//! kontrolą — jawny plan, walidacja całościowa, WAL, `expectedRevision` na slocie.
 
-/// Rola crate'u (zastępowana implementacją w docelowym epiku).
-pub const CRATE_ROLE: &str = "transfer-engine";
+mod exec;
+mod plan;
+mod sync_plan;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_builds() {
-        assert_eq!(super::CRATE_ROLE, "transfer-engine");
-    }
-}
+pub use exec::{execute_push, pull_slot, ExecError, PushOutcome, SlotWriteContext};
+pub use plan::{plan_push, Placement, PlanError, PlannedWrite, TransferPlan};
+pub use sync_plan::{decide_sync, ConflictPolicy, SyncAction};
