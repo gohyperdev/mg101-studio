@@ -124,3 +124,12 @@ Wybieramy **opcję D**. Kluczowe rozstrzygnięcia:
 - v1 (2026-07-05): wersja pierwotna po analizie wariantów Flutter /
   Kotlin+Compose / JUCE / Rust+Tauri / PWA i doprecyzowaniu celów
   (Windows+Linux, SaaS multitenant, multi-device wielu producentów).
+- v2 (2026-07-11): **rewizja powłoki UI.** Pivot na priorytet jakości desktopu
+  i jeden język. Zamiast Tauri i jednego wspólnego frontendu web dla desktopu
+  i SaaS: **desktop = Slint (natywny Rust)** teraz (macOS+Windows), **web =
+  osobny frontend JS** później. Współdzielenie przenosi się z warstwy UI na
+  rdzeń + magistralę komend (jeden rejestr komend dla UI/agenta/MCP/web).
+  Pozostałe rozstrzygnięcia (model kanoniczny, Device Packi, WASM, rewizje,
+  MCP dwupoziomowo, Swift jako referencja) bez zmian. Szczegóły:
+  [/goal — brief przepisania](../architecture/rust-rewrite-goal.md),
+  [HLD Biblioteka/urządzenie/transfer](../architecture/hld-library-device-sync.md).

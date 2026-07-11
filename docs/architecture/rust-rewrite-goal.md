@@ -35,22 +35,26 @@ magistralę komend** (Command/Query bus) — ten sam kontrakt obsługuje UI, age
 MCP i przyszły web.
 
 ```
-                    ┌────────────────────────────────────────────┐
-   UI desktop       │                  CORE (Rust)               │
-  (Tauri: macOS,    │                                            │
-   Windows)  ──IPC──┤  Command/Query API  ← jedno API dla wszystkich
-                    │        │                                    │
-   UI web (później) │        ├─ canonical model (patch/bloki/param)
-   (WASM/HTTP) ─────┤        ├─ device-pack-api (traity, topologia)
-                    │        ├─ pack-nux-mg101 (profile+codec+protocol)
-   Agent (LLM) ─────┤        ├─ device-link (MIDI/SysEx: midir/WebMIDI)
-   (te same komendy)│        ├─ library (store, tagi, grupy, provenance)
-                    │        ├─ transfer-engine (push/pull/sync, limity)
-   MCP klient ──────┤        ├─ agent-core (pętla tool-calling, providerzy)
-  (rmcp, lokalny)   │        ├─ tools (generowane z profilu) + WAL/rewizje
-                    │        └─ sessions (session/messages/journal)
-                    └────────────────────────────────────────────┘
+  UI desktop (TERAZ)    ┌──────────────────────────────────────────┐
+  Slint — Rust natyw.   │               CORE (Rust)               │
+  macOS + Windows  ─────┤  Command/Query API  ← jedno API dla wszystkich
+   (wywołania Rust)     │      │                                   │
+                        │      ├─ canonical model (patch/bloki/param)
+  UI web (PÓŹNIEJ)      │      ├─ device-pack-api (traity, topologia)
+  JS (React/Svelte) ────┤      ├─ pack-nux-mg101 (profile+codec+protocol)
+   HTTP + rdzeń w WASM  │      ├─ device-link (MIDI/SysEx: midir/WebMIDI)
+                        │      ├─ library (store, tagi, grupy, provenance)
+  Agent (LLM) ──────────┤      ├─ transfer-engine (push/pull/sync, limity)
+   te same komendy      │      ├─ agent-core (pętla tool-calling, providerzy)
+                        │      ├─ tools (generowane z profilu) + WAL/rewizje
+  MCP klient ───────────┤      └─ sessions (session/messages/journal)
+   rmcp, lokalny        └──────────────────────────────────────────┘
 ```
+
+Desktop (Slint) woła rdzeń **natywnie w Rust** (jeden język, brak warstwy JS/IPC
+webview). Web (później) to **osobny** frontend JS nad tym samym rdzeniem —
+przez HTTP i/lub rdzeń skompilowany do WASM. **Wspólny jest rdzeń i magistrala
+komend, nie kod UI.**
 
 **Kluczowa unifikacja (zgodna z v1 i ją porządkująca):** dzisiejsze `DomainCommand`
 + rejestr narzędzi + most HTTP + MCP + IPC UI zbiegają się w **jeden rejestr
@@ -60,14 +64,20 @@ komenda z:
 - klasą (`read`/`write`/`filesystem`/`destructive`) sterującą autoryzacją,
 - kontrolą rewizji (`expectedRevision`) i wpisem WAL dla operacji mutujących.
 
-To samo API woła: przycisk w UI (Tauri IPC), agent (tool call), serwer MCP
-(`rmcp`) i — docelowo — frontend web przez HTTP. **Zero logiki domenowej w UI.**
+To samo API woła: przycisk w UI (Slint, wywołanie Rust), agent (tool call), serwer
+MCP (`rmcp`) i — docelowo — frontend web przez HTTP. **Zero logiki domenowej w UI.**
+
+> **Rewizja ADR-0002.** ADR-0002 zakładał Tauri i **jeden wspólny** frontend
+> web dla desktopu i SaaS. Po pivocie priorytetem jest jakość desktopu i jeden
+> język: **desktop = Slint (natywny Rust)**, a **web = osobny frontend JS**
+> później. Współdzielenie przenosi się z warstwy UI na **rdzeń + magistralę
+> komend**. Reszta ADR-0002 (rdzeń, Device Packi, WASM, MCP) bez zmian.
 
 **Workspace Rust** (wg ADR-0002, doprecyzowany):
 `core`, `device-pack-api`, `device-link`, `pack-nux-mg101`, `library`,
-`transfer-engine`, `agent-core`, `mcp` (rmcp), `desktop` (Tauri), `web` (później),
-`server` (SaaS, później). Dev-CLI: dzisiejszy `mg101-probe` jako narzędzie
-diagnostyczne (`list/monitor/probe/dump`).
+`transfer-engine`, `agent-core`, `mcp` (rmcp), `desktop` (Slint), `web` (JS,
+później), `server` (SaaS, później). Dev-CLI: dzisiejszy `mg101-probe` jako
+narzędzie diagnostyczne (`list/monitor/probe/dump`).
 
 ## 3. Zakres — pełna funkcjonalność v1 do przeniesienia (mapa, nic nie ginie)
 
@@ -164,7 +174,7 @@ Przenieść **wszystkie** (warianty `.library` = target po id+rewizji, `.file` =
 - Klucze API: macOS Keychain / Windows Credential Manager (przez abstrakcję
   `secret-store`), fallback env (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`).
 
-### 3.8 Powłoka UI (→ `desktop` Tauri, macOS+Windows)
+### 3.8 Powłoka UI (→ `desktop` Slint, macOS+Windows)
 - Struktura: okno główne (lista patchy z badge origin + ikona IR, sygnałowy
   łańcuch bloków, edytor, inspektor) + ekran Ustawień (provider/endpoint/model/
   klucze) + ekran MCP.
@@ -184,8 +194,13 @@ Przenieść **wszystkie** (warianty `.library` = target po id+rewizji, `.file` =
 
 ## 4. Stack i platformy
 - **Rdzeń:** Rust (natywny + `wasm32` dla web). Testy round-trip przeciw plikom v1.
-- **UI desktop:** Tauri 2 (macOS + Windows teraz), frontend web (React/Svelte —
-  do ustalenia) współdzielony z przyszłym webem.
+- **UI desktop (teraz):** **Slint** (natywny Rust, deklaratywny), macOS + Windows.
+  Jeden język z rdzeniem, brak warstwy JS/webview. Uwaga licencyjna: Slint
+  (GPLv3 / royalty-free / komercyjna) — dla desktopu OK, do świadomej weryfikacji
+  przy dystrybucji komercyjnej.
+- **UI web (później):** **osobny** frontend JS (React/Svelte — do ustalenia) nad
+  tym samym rdzeniem (HTTP + rdzeń w WASM). Nie współdzieli kodu z desktopem;
+  współdzieli rdzeń i magistralę komend.
 - **MIDI/SysEx:** `midir` (desktop), WebMIDI (web, Chrome/Edge).
 - **Agent:** `agent-core` z providerami Anthropic/OpenAI-compatible; MCP `rmcp`.
 - **Store:** SQLite (desktop) ze schematem pod Postgres/sync (SaaS później).
@@ -211,11 +226,12 @@ Przenieść **wszystkie** (warianty `.library` = target po id+rewizji, `.file` =
 - **E6 — Agent-core + MCP.** Providerzy, pętla tool-calling, autoryzacje, sesje,
   kompakcja, **liczenie tokenów/kosztu**, MCP `rmcp` (stdio+HTTP). AC: parytet
   agenta v1 + realny licznik kosztu; MCP z żywą biblioteką.
-- **E7 — UI desktop (Tauri, macOS+Windows).** Edytor, inspektor (Changes/Binary/
+- **E7 — UI desktop (Slint, macOS+Windows).** Edytor, inspektor (Changes/Binary/
   Agent/MCP), lista, ustawienia, trzy zakładki + transfer UI, menu, undo/redo,
   i18n. AC: parytet UX z v1 + nowe zakładki; działa na macOS i Windows.
-- **E8 — Dowód WASM.** Rdzeń kompiluje się do `wasm32`; kodek round-trip w WASM.
-  AC: test w WASM przechodzi (UI web dostarczany osobno/później).
+- **E8 — Dowód WASM (gotowość web).** Rdzeń kompiluje się do `wasm32`; kodek
+  round-trip w WASM. AC: test w WASM przechodzi. **Frontend web (JS) dostarczany
+  osobno, później** — E8 tylko dowodzi, że rdzeń jest gotowy.
 - **E9 — Wygaszenie Swift v1.** Dopiero po parytecie E1–E7.
 - **(E10+ — SaaS/chmura: osobny HLD.)**
 

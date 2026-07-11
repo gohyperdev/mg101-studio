@@ -178,7 +178,7 @@ bajtów. Dry-run pokazuje dokładny plan slotów i różnice.
 **Limity są danymi profilu**, więc dla innego urządzenia (np. 128 slotów, brak
 Factory) ten sam silnik działa bez zmian.
 
-## 6. UI (powłoka Tauri + web) — trzy zakładki
+## 6. UI (powłoka desktop Slint; web JS później) — trzy zakładki
 
 ```
 ┌ Device: NUX MG-101 (fw 202407110808) ─────── ● połączony ─┐
@@ -197,7 +197,8 @@ Factory) ten sam silnik działa bez zmian.
 - Zakładki **User/Factory** = widok slotów sprzętu ze stanem trójdrożnym.
 - Zakładka **Library** = pełna biblioteka z filtrem po tagach/grupach, drzewem grup.
 - Transfer: pojedynczy patch lub cała grupa; plan + potwierdzenie; pasek postępu.
-- Ten sam UI webowy w przeglądarce (WebMIDI, Chrome/Edge) i w Tauri (midir).
+- Desktop teraz: **Slint** (natywny Rust, `midir`). Web później: osobny frontend
+  JS (WebMIDI, Chrome/Edge) nad tym samym rdzeniem. Wspólny rdzeń, nie kod UI.
 
 ## 7. Umiejscowienie kodu urządzenia (z `mg101-probe`)
 
