@@ -242,10 +242,13 @@ fn int_array_arg(args: &Args, key: &str) -> Result<Vec<i64>, ParseError> {
         Some(Value::Array(a)) => a
             .iter()
             .map(|v| match v {
-                Value::Number(n) => n.as_i64().ok_or(ParseError::InvalidArgumentType {
-                    name: key.into(),
-                    expected: "array of integers".into(),
-                }),
+                // Jak v1 `Int(num)`: floaty (np. LLM emituje 50.0) są obcinane.
+                Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)).ok_or(
+                    ParseError::InvalidArgumentType {
+                        name: key.into(),
+                        expected: "array of integers".into(),
+                    },
+                ),
                 _ => Err(ParseError::InvalidArgumentType {
                     name: key.into(),
                     expected: "array of integers".into(),

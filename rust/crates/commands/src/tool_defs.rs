@@ -252,12 +252,19 @@ impl ToolDefinition {
 
         // FILESYSTEM
         let ir_key = if lib { "wavPath" } else { "wav" };
+        // Wariant biblioteczny wskazuje agentowi sandbox ścieżek (jak v1) — to
+        // element interfejsu behawioralnego LLM, nie tylko opis.
+        let wav_desc = if lib {
+            "Ścieżka bezwzględna do pliku WAV z zatwierdzonego katalogu."
+        } else {
+            "Ścieżka bezwzględna do pliku WAV."
+        };
         t.push(ToolDefinition::new(
             "set_ir",
             "Osadza plik IR z formatu WAV we wskazanym patchu.",
             schema(
                 with_target(json!({
-                    ir_key: str_prop("Ścieżka bezwzględna do pliku WAV."),
+                    ir_key: str_prop(wav_desc),
                     "name": str_prop("Nazwa IR (maks. 32 bajty)."),
                 })),
                 &req(&[ir_key, "name"]),

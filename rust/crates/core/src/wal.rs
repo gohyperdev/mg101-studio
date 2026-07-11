@@ -95,6 +95,8 @@ pub enum WalError {
     /// Błąd (de)serializacji.
     Serde(String),
     /// Konflikt hasha — stan na dysku nie zgadza się z oczekiwanym (ręczna edycja).
+    /// Konstruowany przez strażnika `revertLastAgentAction` (wchodzi w E4 wraz
+    /// z portem StudioState; wariant zadeklarowany tu, bo należy do słownika WAL).
     HashConflict { patch_id: PatchId },
 }
 
@@ -142,20 +144,27 @@ pub fn dangling(entries: &[TransactionEntry]) -> Vec<&TransactionEntry> {
 }
 
 /// Plan odzyskiwania po awarii — wierny port `recoverDanglingTransactions`.
-/// `hash_of` zwraca bieżący SHA256 (hex) patcha na dysku (lub `None`, gdy brak).
+/// `hash_of` zwraca bieżący SHA256 (hex) patcha na dysku (lub `None`, gdy pliku
+/// brak). Jak w v1 brak pliku traktujemy jak pusty hash `""` (sentinel używany
+/// dla świeżo tworzonych patchy `before=""` i usuwanych `after=""`), więc
+/// recovery po przerwanym create/delete daje Drop/Promote, nie Rollback.
+/// Plan sortowany malejąco po `sequence` (najnowsze cofane pierwsze — parzystość
+/// kolejności inwersów przy wielu zawieszonych wpisach tego samego patcha).
 pub fn plan_recovery<F>(entries: &[TransactionEntry], hash_of: F) -> Vec<RecoveryAction>
 where
     F: Fn(&PatchId) -> Option<String>,
 {
-    dangling(entries)
+    let mut dangling = dangling(entries);
+    dangling.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+    dangling
         .into_iter()
         .map(|e| {
-            let current = hash_of(&e.patch_id);
-            if current.as_deref() == Some(e.before_hash.as_str()) {
+            let current = hash_of(&e.patch_id).unwrap_or_default();
+            if current == e.before_hash {
                 RecoveryAction::Drop {
                     sequence: e.sequence,
                 }
-            } else if current.as_deref() == Some(e.after_hash.as_str()) {
+            } else if current == e.after_hash {
                 RecoveryAction::Promote {
                     sequence: e.sequence,
                 }
@@ -170,7 +179,10 @@ where
 }
 
 /// Inwersy sesji do zastosowania przy `revertSession` — najnowsze pierwsze.
-/// Obejmuje wpisy committed oraz zawieszone prepared (jak w v1).
+/// Obejmuje wpisy committed oraz zawieszone prepared. UWAGA: v1 cofa zawieszony
+/// wpis tylko gdy jest ostatnią linią dziennika; tu cofamy wszystkie zawieszone
+/// (bezpieczniejsze przy współbieżności). Świadome odstępstwo — do potwierdzenia
+/// przy porcie StudioState w E4 (BACKLOG).
 pub fn session_inverses(entries: &[TransactionEntry]) -> Vec<&InverseOperation> {
     let dangling_seqs: std::collections::HashSet<u64> =
         dangling(entries).iter().map(|e| e.sequence).collect();
@@ -239,13 +251,27 @@ impl JournalStore for FileJournal {
     }
 
     fn rewrite(&self, entries: &[TransactionEntry]) -> Result<(), WalError> {
+        use std::io::Write;
         let mut content = String::new();
         for e in entries {
             content
                 .push_str(&serde_json::to_string(e).map_err(|e| WalError::Serde(e.to_string()))?);
             content.push('\n');
         }
-        std::fs::write(&self.path, content).map_err(|e| WalError::Io(e.to_string()))
+        // Atomowo (jak v1 `atomically: true`): zapis do pliku tymczasowego obok
+        // celu, fsync, potem rename. Awaria w trakcie zostawia nietknięty stary
+        // dziennik zamiast obciętego/uszkodzonego JSONL, którego load() nie odczyta.
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| WalError::Io(e.to_string()))?;
+        }
+        let tmp = self.path.with_extension("jsonl.tmp");
+        {
+            let mut f = std::fs::File::create(&tmp).map_err(|e| WalError::Io(e.to_string()))?;
+            f.write_all(content.as_bytes())
+                .and_then(|_| f.sync_all())
+                .map_err(|e| WalError::Io(e.to_string()))?;
+        }
+        std::fs::rename(&tmp, &self.path).map_err(|e| WalError::Io(e.to_string()))
     }
 }
 
@@ -307,13 +333,39 @@ mod tests {
             "patch-3" => Some("xxx".into()),
             _ => None,
         });
+        // Plan sortowany malejąco po sequence (najnowsze pierwsze).
         assert_eq!(plan.len(), 3);
-        assert!(matches!(plan[0], RecoveryAction::Drop { sequence: 1 }));
-        assert!(matches!(plan[1], RecoveryAction::Promote { sequence: 2 }));
         assert!(matches!(
-            plan[2],
+            plan[0],
             RecoveryAction::Rollback { sequence: 3, .. }
         ));
+        assert!(matches!(plan[1], RecoveryAction::Promote { sequence: 2 }));
+        assert!(matches!(plan[2], RecoveryAction::Drop { sequence: 1 }));
+    }
+
+    #[test]
+    fn recovery_uses_empty_sentinel_when_file_missing() {
+        // Przerwany DELETE: after_hash="" (patch znika). Plik już usunięty →
+        // hash_of zwraca None. Sentinel "" musi dać Promote (dokończ usunięcie),
+        // NIE Rollback (który wskrzesiłby patch). Regres wykryty w review E3.
+        let mut del = entry(5, EntryState::Prepared, "before5", "");
+        del.inverse = InverseOperation::RestoreFromStaging {
+            patch_id: "patch-5".into(),
+            meta: StagedMetadata {
+                origin: "user".into(),
+                source_name: "X".into(),
+                revision: 1,
+                file_name: "x.bin".into(),
+            },
+        };
+        let plan = plan_recovery(&[del], |_| None);
+        assert!(matches!(plan[0], RecoveryAction::Promote { sequence: 5 }));
+
+        // Przerwany CREATE: before_hash="" (patch nie istniał). Plik nie powstał →
+        // None. Sentinel "" musi dać Drop (nic się nie stało), nie Rollback.
+        let create = entry(6, EntryState::Prepared, "", "after6");
+        let plan = plan_recovery(&[create], |_| None);
+        assert!(matches!(plan[0], RecoveryAction::Drop { sequence: 6 }));
     }
 
     #[test]
@@ -361,16 +413,25 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn revert_last_hash_guard() {
-        // Symulacja `revertLastAgentAction`: odmowa, gdy on-disk != after_hash.
-        let entries = vec![entry(1, EntryState::Committed, "a", "b")];
-        let last = last_committed(&entries).unwrap();
-        // Stan na dysku zgodny z after → wolno cofnąć.
-        let on_disk_ok = "b";
-        assert_eq!(on_disk_ok, last.after_hash);
-        // Stan zmieniony ręcznie → konflikt.
-        let on_disk_conflict = "manually-edited";
-        assert_ne!(on_disk_conflict, last.after_hash);
+    fn rewrite_replaces_atomically() {
+        let path =
+            std::env::temp_dir().join(format!("mg101_wal_atom_{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let j = FileJournal::new(&path);
+        j.append(&entry(1, EntryState::Committed, "a", "b"))
+            .unwrap();
+        j.append(&entry(2, EntryState::Committed, "b", "c"))
+            .unwrap();
+        // Kompaktowanie do jednego wpisu — po rename plik jest odczytywalny i pełny.
+        j.rewrite(&[entry(2, EntryState::Committed, "b", "c")])
+            .unwrap();
+        let loaded = j.load().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].sequence, 2);
+        // Brak pozostawionego pliku tymczasowego.
+        assert!(!path.with_extension("jsonl.tmp").exists());
+        let _ = std::fs::remove_file(&path);
     }
 }

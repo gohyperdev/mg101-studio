@@ -40,6 +40,27 @@
 - `ProtocolError`: wariant `Link(...)` zamiast mapowania błędów transportu na
   `BadResponse`; wariant `ReadOnly` obecnie martwy.
 
+## Z review E3 (naprawione lub zaplanowane)
+- [x] `plan_recovery`: sentinel `""` przy braku pliku (create/delete) — było
+  Rollback wskrzeszający patch; +testy (KRYTYCZNE #1).
+- [x] `FileJournal::rewrite`: atomowy temp+fsync+rename — było `fs::write`
+  obcinające plik przy awarii (KRYTYCZNE #2); +test.
+- [x] `plan_recovery`: sort malejąco po `sequence` (kolejność inwersów).
+- [x] `int_array_arg`: fallback f64→i64 (LLM emituje `[50.0]`) — parytet z v1.
+- [x] `set_ir`: opis wariantu bibliotecznego z frazą o zatwierdzonym katalogu.
+- Format dziennika na dysku jest v2-native (snake_case, `timestamp_ms` epoch,
+  blob jako tablica). NIE jest wstecznie zgodny z JSONL v1 (`timestamp` Double
+  epoka-2001, camelCase, base64). Decyzja: dziennik WAL jest efemeryczny
+  (sesyjny stan crash-recovery), upgrade in-place startuje czysty dziennik —
+  brak migracji zawieszonej transakcji v1. Potwierdzić przy retire v1 (E9).
+- `session_inverses` cofa WSZYSTKIE zawieszone wpisy; v1 tylko ostatnią linię.
+  Świadome odstępstwo — potwierdzić przy porcie StudioState (E4).
+- Duplikacja `Kind`/nazw między `Command` a `ToolDefinition` — dodać test
+  odwrotny (każda komenda ma definicję) i test spójności `kind` (E4).
+- Komunikaty błędów aliasów (`bool_value` vs `bypassed`, `keys[0]` w
+  `alias_string`) różnią się od v1 — tylko treść błędu, nie zachowanie.
+- `sha256_hex`: `format!` per bajt — mikro-optymalizacja (dowolny moment).
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.
