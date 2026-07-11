@@ -14,6 +14,10 @@ pub const PROFILE_JSON: &str = include_str!("../resources/device-profile.json");
 /// Katalog efektów (dane) — osadzony z pakietu.
 pub const CATALOG_JSON: &str = include_str!("../resources/effects-catalog.json");
 
+/// 36 patchy fabrycznych w formacie `.mg101patch` (zestaw urządzenia, 36×8402 B).
+/// Służy m.in. do zasiania pustej Biblioteki przy pierwszym starcie (parytet v1).
+pub const FACTORY_PATCHES: &[u8] = include_bytes!("../oracle/factory-patches.mg101patch");
+
 /// Rola crate'u (znacznik zgodności).
 pub const CRATE_ROLE: &str = "device-pack-nux-mg101";
 
@@ -61,6 +65,43 @@ mod tests {
 
     fn profile() -> DeviceProfile {
         load().expect("profil ładuje się i waliduje").0
+    }
+
+    #[test]
+    fn catalog_yields_rich_param_metadata() {
+        use mg101_core::effect_catalog::Control;
+        let (_p, c) = load().expect("load OK");
+        // AMP model 1 (JAZZ CLEAN): GAIN suwak z etykietą, BRIGHT przełącznik.
+        let amp = c.model("amp", 1).expect("amp model 1");
+        let gain = amp
+            .parameters
+            .iter()
+            .find(|p| p.name == "gain")
+            .expect("gain");
+        assert_eq!(gain.label(), "GAIN");
+        assert_eq!(gain.control(), Control::Slider);
+        assert_eq!(gain.midi_cc, Some(24));
+        let bright = amp
+            .parameters
+            .iter()
+            .find(|p| p.name == "bright")
+            .expect("bright");
+        assert_eq!(
+            bright.control(),
+            Control::Toggle,
+            "BRIGHT to przełącznik 0/1"
+        );
+        // Cabinet: katalog niesie jednostki (dB/Hz) i osobno oznacza parametry
+        // „inferred" — obie cechy muszą przez rdzeń przechodzić.
+        let cab: Vec<_> = c.models("cab").iter().flat_map(|m| &m.parameters).collect();
+        assert!(
+            cab.iter().any(|p| p.unit.as_deref() == Some("Hz")),
+            "cab ma parametry w Hz"
+        );
+        assert!(
+            cab.iter().any(|p| !p.is_confirmed()),
+            "cab oznacza niepewne parametry"
+        );
     }
 
     #[test]

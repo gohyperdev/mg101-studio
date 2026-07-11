@@ -61,10 +61,21 @@ pub struct SlotRow {
 /// Parametr aktywnego modelu bloku.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamRow {
+    /// Techniczna nazwa (klucz komend, np. `gain`).
     pub name: String,
+    /// Etykieta do wyświetlenia (np. `GAIN`); fallback = `name`.
+    pub label: String,
     pub value: i64,
     pub minimum: i64,
     pub maximum: i64,
+    /// Kontrolka: `"slider"` lub `"toggle"` (dane katalogu).
+    pub control: String,
+    /// Jednostka fizyczna (np. `dB`, `Hz`), pusta gdy brak.
+    pub unit: String,
+    /// MIDI CC parametru (−1 gdy nieznany).
+    pub midi_cc: i64,
+    /// `false` = semantyka/zapis „inferred" (oznaczyć w UI).
+    pub confirmed: bool,
 }
 
 /// Blok w łańcuchu efektów (widok edytora).
@@ -648,15 +659,40 @@ fn block_from_json(v: &Value) -> BlockRow {
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
-                .map(|p| ParamRow {
-                    name: p
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    value: p.get("value").and_then(Value::as_i64).unwrap_or(0),
-                    minimum: p.get("minimum").and_then(Value::as_i64).unwrap_or(0),
-                    maximum: p.get("maximum").and_then(Value::as_i64).unwrap_or(0),
+                .map(|p| {
+                    let s = |k: &str| {
+                        p.get(k)
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    let name = s("name");
+                    let label = {
+                        let l = s("label");
+                        if l.is_empty() {
+                            name.clone()
+                        } else {
+                            l
+                        }
+                    };
+                    ParamRow {
+                        name,
+                        label,
+                        value: p.get("value").and_then(Value::as_i64).unwrap_or(0),
+                        minimum: p.get("minimum").and_then(Value::as_i64).unwrap_or(0),
+                        maximum: p.get("maximum").and_then(Value::as_i64).unwrap_or(0),
+                        control: {
+                            let c = s("control");
+                            if c.is_empty() {
+                                "slider".to_owned()
+                            } else {
+                                c
+                            }
+                        },
+                        unit: s("unit"),
+                        midi_cc: p.get("midi_cc").and_then(Value::as_i64).unwrap_or(-1),
+                        confirmed: p.get("confirmed").and_then(Value::as_bool).unwrap_or(true),
+                    }
                 })
                 .collect()
         })

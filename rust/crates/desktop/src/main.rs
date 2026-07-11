@@ -14,13 +14,36 @@ use mg101_core::wal::{JournalStore, TransactionEntry, WalError};
 use mg101_desktop::agent::{AgentEvent, ChatRunner, SYSTEM_PROMPT};
 use mg101_desktop::vm::LibraryTab;
 use mg101_desktop::{Lang, ViewModel};
-use mg101_library::MemoryStore;
+use mg101_library::SqliteStore;
 use mg101_studio::Studio;
 use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
-type Vm = ViewModel<MemoryStore>;
+type Vm = ViewModel<SqliteStore>;
+
+/// Katalog danych aplikacji (trwała Library) — parytet v1.
+/// macOS: `~/Library/Application Support/dev.mos.mg101studio`;
+/// Windows: `%APPDATA%\dev.mos.mg101studio`; inne: `$HOME/.mg101studio`.
+fn app_data_dir() -> std::path::PathBuf {
+    const APP_DIR: &str = "dev.mos.mg101studio";
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::Path::new(&home)
+                .join("Library/Application Support")
+                .join(APP_DIR);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return std::path::Path::new(&appdata).join(APP_DIR);
+        }
+    }
+    let home = std::env::var_os("HOME").unwrap_or_else(|| ".".into());
+    std::path::Path::new(&home).join(".mg101studio")
+}
 
 /// Dziennik WAL sesji w pamięci — daje działający revert (review E7/K2).
 #[derive(Default)]
@@ -80,9 +103,14 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                 .iter()
                 .map(|p| ParamRowUi {
                     name: p.name.clone().into(),
+                    label: p.label.clone().into(),
                     value: p.value as i32,
                     minimum: p.minimum as i32,
                     maximum: p.maximum as i32,
+                    control: p.control.clone().into(),
+                    unit: p.unit.clone().into(),
+                    midi_cc: p.midi_cc as i32,
+                    confirmed: p.confirmed,
                 })
                 .collect();
             let opts = vm.models(&b.block);
@@ -243,10 +271,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (profile, catalog) = mg101_pack_nux_mg101::load()?;
     let profile = Box::leak(Box::new(profile));
     let catalog = Box::leak(Box::new(catalog));
-    let studio = Studio::new(MemoryStore::new(), profile, catalog, 0)
-        .with_journal(Box::new(SessionJournal::default()));
+    // Trwała Library w katalogu danych aplikacji (parytet v1). Awaria dysku nie
+    // może wywrócić startu — spadamy na bazę w pamięci z ostrzeżeniem.
+    let data_dir = app_data_dir();
+    let store = match std::fs::create_dir_all(&data_dir)
+        .map_err(|e| e.to_string())
+        .and_then(|()| {
+            SqliteStore::open(data_dir.join("library.sqlite")).map_err(|e| e.to_string())
+        }) {
+        Ok(store) => {
+            eprintln!("Library: {}", data_dir.join("library.sqlite").display());
+            store
+        }
+        Err(e) => {
+            eprintln!("Library trwała niedostępna ({e}) — pamięć ulotna na tę sesję.");
+            SqliteStore::open_in_memory()?
+        }
+    };
+    let studio =
+        Studio::new(store, profile, catalog, 0).with_journal(Box::new(SessionJournal::default()));
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
     let runner: Rc<RefCell<Option<ChatRunner>>> = Rc::new(RefCell::new(None));
+
+    // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — jeśli jest,
+    // wstrzyknij do konfiguracji, by agent był od razu gotowy bez wpisywania.
+    {
+        let mut vmb = vm.borrow_mut();
+        let mut cfg = vmb.agent_config().clone();
+        if cfg.api_key.is_empty() {
+            if let Some(key) = mg101_desktop::keychain::load_key(cfg.provider) {
+                // Log bez sekretu — tylko potwierdzenie i długość.
+                eprintln!(
+                    "Klucz API wczytany z magazynu (dostawca {:?}, długość {}).",
+                    cfg.provider,
+                    key.len()
+                );
+                cfg.api_key = key;
+                vmb.set_agent_config(cfg);
+            } else {
+                eprintln!("Brak klucza API w magazynie — wpisz w Ustawieniach.");
+            }
+        }
+    }
+
+    // Zasianie Biblioteki przy pierwszym starcie (pusta) — 36 patchy fabrycznych,
+    // parytet v1. Trwałe (SqliteStore), więc dzieje się raz. Bez sprzętu.
+    {
+        let mut vmb = vm.borrow_mut();
+        if vmb.library_rows().is_empty() {
+            let seed_path = data_dir.join("factory-seed.mg101patch");
+            match std::fs::write(&seed_path, mg101_pack_nux_mg101::FACTORY_PATCHES) {
+                Ok(()) => {
+                    let n = vmb.import(&seed_path.to_string_lossy());
+                    eprintln!("Biblioteka zasiana: {n} patchy fabrycznych.");
+                }
+                Err(e) => eprintln!("Nie zasiano Biblioteki ({e}) — użyj Import."),
+            }
+        }
+    }
 
     let ui = AppWindow::new()?;
     apply_labels(&ui, &vm.borrow());
@@ -351,6 +433,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: model.to_string(),
             api_key: key.to_string(),
         });
+        // Persystencja klucza w magazynie sekretów (parytet v1) — błąd tylko
+        // sygnalizujemy, konfiguracja w pamięci i tak działa do końca sesji.
+        if let Err(e) = mg101_desktop::keychain::save_key(provider, &key) {
+            vm.report_error(format!("zapis klucza do magazynu: {e}"));
+        }
     });
 
     // Zmiana języka: przelicz etykiety + odśwież.

@@ -228,3 +228,15 @@
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.
 - E6: zdecydować, czy `mcp` to osobna binarka czy embed w desktop.
+
+## W3 — parytet katalogu parametrów (follow-up)
+- **Transformacja wartości do jednostek fizycznych** — katalog niesie `display_transform`
+  (81 param.: liniowe `raw/100*24-12` oraz tabele `quicktone_low_cut_table[raw]` /
+  `high_cut` / `cabinet_display_tables`). UI pokazuje wartość SUROWĄ 0..100, a jednostkę
+  (dB/Hz) tylko w podpowiedzi zakresu — bo przeliczenia jeszcze nie ma. Do zrobienia:
+  ewaluator wzorów + osadzenie tabel `quicktone_*`, rendering wartości ludzkiej
+  (np. −12..+12 dB, 20..1000 Hz) obok kontrolki. Źródło: QuickTone binarka.
+- **106 parametrów „inferred"** (cab 81, eq 18) — oznaczone `≈` w UI; docelowo potwierdzić
+  kontrolowanym eksportem z QuickTone (evidence_policy: confirmed).
+- **Etykiety wartości enum/list** — brak w katalogu (`value_labels`=0); modele mają UET
+  ciągłe (2/3) lub toggle (7); brak realnych list wartości do nazwania.

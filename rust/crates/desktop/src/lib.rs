@@ -12,6 +12,10 @@ pub mod vm;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod agent;
 
+// Klucz API w systemowym magazynie sekretów — tylko natywnie.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod keychain;
+
 pub use i18n::{tr, Lang};
 pub use vm::{
     ByteChange, ChatRow, LibraryTab, ModelOption, PatchDetail, PatchRow, SlotRow, ViewModel,

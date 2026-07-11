@@ -14,9 +14,14 @@ export struct PatchRowUi {
 
 export struct ParamRowUi {
     name: string,
+    label: string,
     value: int,
     minimum: int,
     maximum: int,
+    control: string, // "slider" | "toggle"
+    unit: string,
+    midi-cc: int, // -1 = nieznany
+    confirmed: bool, // false = wartość/semantyka "inferred"
 }
 
 export struct BlockRowUi {
@@ -346,28 +351,51 @@ export component AppWindow inherits Window {
                                 }
                                 for p[pi] in blk.params: HorizontalBox {
                                     spacing: 8px;
-                                    Text {
-                                        width: 120px;
-                                        text: p.name;
-                                        color: #c4c4cc;
-                                        vertical-alignment: center;
+                                    HorizontalBox {
+                                        width: 132px;
+                                        padding: 0px;
+                                        spacing: 4px;
+                                        Text {
+                                            // Etykieta katalogowa (GAIN), nie techniczna (gain).
+                                            text: p.label;
+                                            color: #c4c4cc;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            // Znacznik "inferred" — semantyka/zapis niepotwierdzone.
+                                            text: p.confirmed ? "" : "≈";
+                                            color: #e0a020;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                     Text {
                                         width: 46px;
-                                        text: p.value;
+                                        // Wartość SUROWA (0..100). Jednostka w podpowiedzi —
+                                        // przeliczenie do dB/Hz czeka na ewaluator wzorów (BACKLOG W3).
+                                        text: p.control == "toggle"
+                                            ? (p.value == 0 ? "OFF" : "ON")
+                                            : p.value;
                                         color: white;
                                         vertical-alignment: center;
                                     }
-                                    Button {
+                                    if p.control == "toggle": Button {
+                                        text: p.value == 0 ? "→ ON" : "→ OFF";
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value == 0 ? 1 : 0); }
+                                    }
+                                    if p.control != "toggle": Button {
                                         text: "−";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1); }
                                     }
-                                    Button {
+                                    if p.control != "toggle": Button {
                                         text: "+";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1); }
                                     }
                                     Text {
-                                        text: p.minimum + "…" + p.maximum;
+                                        text: p.minimum + "…" + p.maximum
+                                            + (p.unit == "" ? "" : " " + p.unit)
+                                            + (p.midi-cc >= 0 ? "  CC" + p.midi-cc : "");
                                         color: #6a6a76;
                                         font-size: 11px;
                                         vertical-alignment: center;
