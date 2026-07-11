@@ -8,13 +8,21 @@
 //! wstrzykiwane. `blob` patcha to edytowalny rekord urządzenia o `record_size`
 //! z profilu.
 //!
-//! E6.2: narzędzia odczytu + edycji + duplikat/select. Filesystem (import/export/
-//! set_ir z pliku/list_files) i revert/WAL wchodzą w E6.2b.
+//! Komplet narzędzi v1: odczyt + edycja + duplikat/select (E6.2); WAL sesji
+//! (mutate/duplicate/delete prepared→committed), revert_last/revert_session przez
+//! inwersy, oraz filesystem set_ir/list_files/import/export (E6.2b, natywne).
 
 use mg101_commands::{Command, TargetRef};
+use mg101_core::wal::{
+    last_committed, sha256_hex, EntryState, InverseOperation, JournalStore, StagedMetadata,
+    TransactionEntry,
+};
 use mg101_core::{DeviceProfile, EffectCatalog, PatchError, PatchRecord, ProfileError};
-use mg101_library::{LibraryError, LibraryPatch, LibraryStore, PatchId};
+use mg101_library::{
+    content_hash, LibraryError, LibraryPatch, LibraryStore, MaskRange, PatchId, PatchOrigin,
+};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 /// Błąd wykonania narzędzia (port `ToolExecutionError`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +84,12 @@ pub struct Studio<'p, S: LibraryStore> {
     seq: u64,
     /// Znacznik czasu dostarczany przez wywołującego (wasm-safe).
     now_ms: i64,
+    /// Dziennik WAL sesji (opcjonalny) — mutacje prepared→committed, revert.
+    journal: Option<Box<dyn JournalStore>>,
+    /// Poczekalnia soft-delete (dla RestoreFromStaging przy revert).
+    staging: BTreeMap<PatchId, LibraryPatch>,
+    /// Katalogi zatwierdzone do operacji plikowych (sandbox, jak agent-core).
+    approved_roots: Vec<String>,
 }
 
 impl<'p, S: LibraryStore> Studio<'p, S> {
@@ -99,12 +113,57 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             selected_block,
             seq: 0,
             now_ms,
+            journal: None,
+            staging: BTreeMap::new(),
+            approved_roots: Vec::new(),
         }
+    }
+
+    /// Podłącza dziennik WAL (mutacje journalowane, revert dostępny).
+    pub fn with_journal(mut self, journal: Box<dyn JournalStore>) -> Self {
+        self.journal = Some(journal);
+        self
+    }
+
+    /// Zatwierdza katalog do operacji plikowych (sandbox).
+    pub fn approve_root(&mut self, root: impl Into<String>) {
+        self.approved_roots.push(root.into());
     }
 
     /// Dostęp do składu (dla testów / warstwy wyżej).
     pub fn store(&self) -> &S {
         &self.store
+    }
+
+    /// Region nazwy patcha jako maska fingerprintu (z profilu — dane).
+    fn name_mask(&self) -> [MaskRange; 1] {
+        [MaskRange {
+            start: self.profile.patch_name.offset,
+            len: self.profile.patch_name.length,
+        }]
+    }
+
+    /// Przelicza fingerprint patcha po edycji blobu (spójność z silnikiem sync).
+    fn refresh_hashes(&self, patch: &mut LibraryPatch) {
+        patch.exact_hash = sha256_hex(&patch.blob);
+        patch.content_hash = content_hash(&patch.blob, &self.name_mask());
+    }
+
+    /// Kolejny numer sekwencji WAL (liczba wpisów, jak v1).
+    fn next_wal_seq(&self) -> u64 {
+        self.journal
+            .as_ref()
+            .and_then(|j| j.load().ok())
+            .map(|e| e.len() as u64)
+            .unwrap_or(0)
+    }
+
+    fn journal_append(&self, entry: &TransactionEntry) -> Result<(), ExecError> {
+        if let Some(j) = &self.journal {
+            j.append(entry)
+                .map_err(|e| ExecError::Library(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Aktualizuje znacznik czasu operacji.
@@ -199,10 +258,20 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             }),
             Command::DuplicatePatch { target } => self.duplicate(target),
             Command::SelectPatch { patch_id } => self.select(patch_id),
-            other => Err(ExecError::Unsupported(format!(
-                "narzędzie {} wchodzi w E6.2b (filesystem/revert)",
-                other.tool_name()
-            ))),
+            Command::DeletePatch { target } => self.delete(target),
+            Command::RevertLastAgentAction => self.revert_last(),
+            Command::RevertSession => self.revert_session(),
+            Command::SetIr {
+                target,
+                wav_path,
+                name,
+            } => self.set_ir(target, wav_path, name),
+            Command::ImportPatch { path } => self.import_patch(path),
+            Command::ExportPatch {
+                target,
+                destination_path,
+            } => self.export_patch(target, destination_path),
+            Command::ListFiles { path } => self.list_files(path),
         }
     }
 
@@ -360,11 +429,45 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
     {
         let (patch_id, revision) = library_target(target)?;
         let mut item = self.get_patch(&patch_id)?;
+        let before_blob = item.blob.clone();
+        let before_hash = sha256_hex(&before_blob);
+
         let mut rec = self.record(&item)?;
         edit(&mut rec, self.profile, self.catalog)?;
-        item.blob = rec.data().to_vec();
+        let new_blob = rec.data().to_vec();
+
+        // Brak realnej zmiany → nic nie robimy (parytet v1).
+        if new_blob == before_blob {
+            return Ok(json!({"success": true, "revision": item.revision}));
+        }
+
+        item.blob = new_blob;
         item.updated_at = self.now_ms;
+        self.refresh_hashes(&mut item);
+        let after_hash = item.exact_hash.clone();
+
+        // WAL: prepared (inverse = przywróć poprzednie bajty).
+        let seq = self.next_wal_seq();
+        let mut entry = TransactionEntry {
+            sequence: seq,
+            timestamp_ms: self.now_ms,
+            tool_name: "mutate".into(),
+            patch_id: patch_id.clone(),
+            revision_before: revision as i64,
+            inverse: InverseOperation::RestoreBytes {
+                patch_id: patch_id.clone(),
+                blob: before_blob,
+            },
+            before_hash,
+            after_hash,
+            state: EntryState::Prepared,
+        };
+        self.journal_append(&entry)?;
+
         let new_rev = self.store.update(item, revision)?;
+
+        entry.state = EntryState::Committed;
+        self.journal_append(&entry)?;
         Ok(json!({"success": true, "revision": new_rev}))
     }
 
@@ -380,14 +483,189 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         let new_id = format!("{patch_id}-copy-{}", self.seq);
         let mut copy = src.clone();
         copy.id = new_id.clone();
-        copy.origin = mg101_library::PatchOrigin::Created;
+        copy.origin = PatchOrigin::Created;
         copy.revision = 1;
         copy.created_at = self.now_ms;
         copy.updated_at = self.now_ms;
         copy.tags.clear();
         copy.groups.clear();
+        self.refresh_hashes(&mut copy);
+        let after_hash = copy.exact_hash.clone();
+
+        // WAL: prepared (inverse = usuń nowy patch).
+        let seq = self.next_wal_seq();
+        let mut entry = TransactionEntry {
+            sequence: seq,
+            timestamp_ms: self.now_ms,
+            tool_name: "duplicate".into(),
+            patch_id: new_id.clone(),
+            revision_before: 0,
+            inverse: InverseOperation::RemovePatch {
+                patch_id: new_id.clone(),
+            },
+            before_hash: String::new(),
+            after_hash,
+            state: EntryState::Prepared,
+        };
+        self.journal_append(&entry)?;
+
         self.store.add(copy)?;
+
+        entry.state = EntryState::Committed;
+        self.journal_append(&entry)?;
         Ok(json!({"success": true, "newPatchID": new_id}))
+    }
+
+    fn delete(&mut self, target: &TargetRef) -> Result<Value, ExecError> {
+        let (patch_id, revision) = library_target(target)?;
+        let item = self.get_patch(&patch_id)?;
+        if item.revision != revision {
+            return Err(ExecError::Conflict {
+                current_revision: item.revision,
+            });
+        }
+        let before_hash = sha256_hex(&item.blob);
+        let meta = StagedMetadata {
+            origin: format!("{:?}", item.origin),
+            source_name: item.name.clone(),
+            revision: item.revision as i64,
+            file_name: format!("{patch_id}.mg101patch"),
+        };
+
+        // WAL: prepared (inverse = przywróć z poczekalni).
+        let seq = self.next_wal_seq();
+        let mut entry = TransactionEntry {
+            sequence: seq,
+            timestamp_ms: self.now_ms,
+            tool_name: "delete".into(),
+            patch_id: patch_id.clone(),
+            revision_before: item.revision as i64,
+            inverse: InverseOperation::RestoreFromStaging {
+                patch_id: patch_id.clone(),
+                meta,
+            },
+            before_hash,
+            after_hash: String::new(),
+            state: EntryState::Prepared,
+        };
+        self.journal_append(&entry)?;
+
+        let removed = self.store.remove(&patch_id)?;
+        self.staging.insert(patch_id.clone(), removed); // poczekalnia dla revert
+
+        entry.state = EntryState::Committed;
+        self.journal_append(&entry)?;
+        Ok(json!({"success": true}))
+    }
+
+    fn revert_last(&mut self) -> Result<Value, ExecError> {
+        let entries = self.load_journal()?;
+        let last = last_committed(&entries)
+            .cloned()
+            .ok_or_else(|| ExecError::Unsupported("brak akcji do cofnięcia".into()))?;
+        self.apply_inverse(&last.inverse, &last.after_hash)?;
+        // Usuń wpisy tej sekwencji z dziennika (jak v1).
+        let filtered: Vec<TransactionEntry> = entries
+            .into_iter()
+            .filter(|e| e.sequence != last.sequence)
+            .collect();
+        self.rewrite_journal(&filtered)?;
+        Ok(json!({"success": true}))
+    }
+
+    fn revert_session(&mut self) -> Result<Value, ExecError> {
+        let entries = self.load_journal()?;
+        // Wpisy do cofnięcia: committed oraz zawieszone prepared; najnowsze pierwsze
+        // (kolejność jak session_inverses, ale z zachowaniem after_hash per wpis).
+        let committed_seqs: std::collections::HashSet<u64> = entries
+            .iter()
+            .filter(|e| e.state == EntryState::Committed)
+            .map(|e| e.sequence)
+            .collect();
+        let mut to_revert: Vec<&TransactionEntry> = entries
+            .iter()
+            .filter(|e| {
+                e.state == EntryState::Committed
+                    || (e.state == EntryState::Prepared && !committed_seqs.contains(&e.sequence))
+            })
+            .collect();
+        to_revert.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+        let plan: Vec<(InverseOperation, String)> = to_revert
+            .into_iter()
+            .map(|e| (e.inverse.clone(), e.after_hash.clone()))
+            .collect();
+        for (inv, after_hash) in &plan {
+            self.apply_inverse(inv, after_hash)?;
+        }
+        self.rewrite_journal(&[])?;
+        Ok(json!({"success": true}))
+    }
+
+    /// Stosuje operację odwrotną do składu Biblioteki (port `applyInverse`).
+    fn apply_inverse(
+        &mut self,
+        inverse: &InverseOperation,
+        after_hash: &str,
+    ) -> Result<(), ExecError> {
+        match inverse {
+            InverseOperation::RestoreBytes { patch_id, blob } => {
+                let mut item = self
+                    .store
+                    .get(patch_id)
+                    .ok_or_else(|| ExecError::NotFound(patch_id.clone()))?;
+                if sha256_hex(&item.blob) != after_hash {
+                    return Err(ExecError::Unsupported(format!(
+                        "konflikt cofania: patch {patch_id} ma ręczne zmiany"
+                    )));
+                }
+                item.blob = blob.clone();
+                self.refresh_hashes(&mut item);
+                // Zapis z bieżącą rewizją (bez kontroli — revert autorytatywny).
+                let current = item.revision;
+                self.store.update(item, current)?;
+                Ok(())
+            }
+            InverseOperation::RemovePatch { patch_id } => {
+                if let Some(existing) = self.store.get(patch_id) {
+                    if sha256_hex(&existing.blob) != after_hash {
+                        return Err(ExecError::Unsupported(format!(
+                            "konflikt cofania: duplikat {patch_id} ma ręczne zmiany"
+                        )));
+                    }
+                    self.store.remove(patch_id)?;
+                }
+                Ok(())
+            }
+            InverseOperation::RestoreFromStaging { patch_id, .. } => {
+                if self.store.get(patch_id).is_some() {
+                    return Err(ExecError::Unsupported(format!(
+                        "konflikt cofania: patch {patch_id} już istnieje"
+                    )));
+                }
+                let staged = self
+                    .staging
+                    .remove(patch_id)
+                    .ok_or_else(|| ExecError::NotFound(patch_id.clone()))?;
+                self.store.add(staged)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn load_journal(&self) -> Result<Vec<TransactionEntry>, ExecError> {
+        self.journal
+            .as_ref()
+            .ok_or_else(|| ExecError::Unsupported("brak aktywnej sesji/dziennika".into()))?
+            .load()
+            .map_err(|e| ExecError::Library(e.to_string()))
+    }
+
+    fn rewrite_journal(&self, entries: &[TransactionEntry]) -> Result<(), ExecError> {
+        if let Some(j) = &self.journal {
+            j.rewrite(entries)
+                .map_err(|e| ExecError::Library(e.to_string()))?;
+        }
+        Ok(())
     }
 
     fn select(&mut self, id: &PatchId) -> Result<Value, ExecError> {
@@ -396,6 +674,139 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         }
         self.selected_patch = Some(id.clone());
         Ok(json!({"success": true}))
+    }
+
+    // --- Filesystem (natywne; na wasm zwracają Unsupported) ---
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn set_ir(
+        &mut self,
+        target: &TargetRef,
+        wav_path: &str,
+        name: &str,
+    ) -> Result<Value, ExecError> {
+        let wav = std::fs::read(wav_path)
+            .map_err(|e| ExecError::Unsupported(format!("odczyt WAV '{wav_path}': {e}")))?;
+        let name = name.to_string();
+        self.mutate(target, move |rec, _, _| {
+            rec.set_ir(&wav, &name)?;
+            Ok(())
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn list_files(&self, path: &str) -> Result<Value, ExecError> {
+        let entries = std::fs::read_dir(path)
+            .map_err(|e| ExecError::Unsupported(format!("katalog '{path}': {e}")))?;
+        let mut files = Vec::new();
+        for e in entries.flatten() {
+            if let Some(name) = e.file_name().to_str() {
+                if !name.starts_with('.') {
+                    files.push(Value::String(name.to_string()));
+                }
+            }
+        }
+        Ok(json!({"success": true, "files": files}))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_patch(&mut self, path: &str) -> Result<Value, ExecError> {
+        let data = std::fs::read(path)
+            .map_err(|e| ExecError::Unsupported(format!("odczyt '{path}': {e}")))?;
+        let rs = self.profile.record_size;
+        if data.is_empty() || !data.len().is_multiple_of(rs) {
+            return Err(ExecError::Unsupported(format!(
+                "plik nie jest wielokrotnością rekordu {rs} B (rozmiar {})",
+                data.len()
+            )));
+        }
+        let mut ids = Vec::new();
+        for (i, chunk) in data.chunks(rs).enumerate() {
+            self.seq += 1;
+            let id = format!("import-{}-{}", self.seq, i);
+            // Walidacja: rekord musi się dekodować profilem (bajty święte zachowane).
+            PatchRecord::new(chunk.to_vec(), self.profile)?;
+            let blob = chunk.to_vec();
+            let mut patch = LibraryPatch {
+                id: id.clone(),
+                name: String::new(),
+                content_hash: String::new(),
+                exact_hash: String::new(),
+                blob,
+                origin: PatchOrigin::ImportedFile,
+                device_id: self.profile.id.clone(),
+                firmware: None,
+                codec_version: "1".into(),
+                tags: Default::default(),
+                groups: Default::default(),
+                created_at: self.now_ms,
+                updated_at: self.now_ms,
+                revision: 1,
+            };
+            patch.name = PatchRecord::new(patch.blob.clone(), self.profile)?.name();
+            self.refresh_hashes(&mut patch);
+            self.store.add(patch)?;
+            ids.push(Value::String(id));
+        }
+        Ok(json!({"success": true, "importedPatchIDs": ids}))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn export_patch(
+        &mut self,
+        target: &TargetRef,
+        destination_path: &str,
+    ) -> Result<Value, ExecError> {
+        let (patch_id, revision) = library_target(target)?;
+        let item = self.get_patch(&patch_id)?;
+        if item.revision != revision {
+            return Err(ExecError::Conflict {
+                current_revision: item.revision,
+            });
+        }
+        // Jeśli cel to katalog — dołóż nazwę pliku z nazwy patcha.
+        let dest = std::path::Path::new(destination_path);
+        let final_path = if dest.is_dir() {
+            let name = item.name.trim();
+            let filename = if name.is_empty() {
+                patch_id.as_str()
+            } else {
+                name
+            };
+            dest.join(format!("{filename}.mg101patch"))
+        } else {
+            dest.to_path_buf()
+        };
+        std::fs::write(&final_path, &item.blob).map_err(|e| {
+            ExecError::Unsupported(format!("zapis '{}': {e}", final_path.display()))
+        })?;
+        Ok(json!({"success": true, "path": final_path.display().to_string()}))
+    }
+
+    // Warianty wasm — operacje plikowe niedostępne w przeglądarce.
+    #[cfg(target_arch = "wasm32")]
+    fn set_ir(&mut self, _t: &TargetRef, _w: &str, _n: &str) -> Result<Value, ExecError> {
+        Err(ExecError::Unsupported(
+            "filesystem niedostępny na wasm".into(),
+        ))
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn list_files(&self, _p: &str) -> Result<Value, ExecError> {
+        Err(ExecError::Unsupported(
+            "filesystem niedostępny na wasm".into(),
+        ))
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn import_patch(&mut self, _p: &str) -> Result<Value, ExecError> {
+        Err(ExecError::Unsupported(
+            "filesystem niedostępny na wasm".into(),
+        ))
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn export_patch(&mut self, _t: &TargetRef, _d: &str) -> Result<Value, ExecError> {
+        Err(ExecError::Unsupported(
+            "filesystem niedostępny na wasm".into(),
+        ))
     }
 }
 
