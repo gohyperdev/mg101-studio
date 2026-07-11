@@ -7,6 +7,16 @@
 //!
 //! Maskowanie jest **device-agnostyczne**: regiony to dane (`MaskRange`) z profilu
 //! Device Packa; biblioteka nie wie, co oznaczają — tylko zeruje bajty przed hashem.
+//!
+//! **KONTRAKT PRZESTRZENI HASHY (krytyczne dla silnika sync i transferu E5):**
+//! wszystkie hashe fingerprint MUSZĄ być liczone nad **reprezentacją rekordu
+//! urządzenia** — tym, co faktycznie trafia do/ze slotu — a nie nad kontenerem
+//! pliku `.mg101patch`. Inaczej patch zaimportowany z pliku (kontener 8402 B) i
+//! ten sam patch odczytany ze slotu (rekord 189 B) dałyby różne hashe i silnik
+//! (`sync.rs`) wiecznie raportowałby `DeviceModified`. Konsekwencja: przy imporcie
+//! pliku Device Pack najpierw wyłuskuje rekord urządzenia, i to jego bajty stają
+//! się `blob` w [`crate::LibraryPatch`]; `hash_at_transfer` w linku liczony jest
+//! nad tymi samymi bajtami. (HLD §4 zaktualizowane.)
 
 use crate::Hash;
 use sha2::{Digest, Sha256};

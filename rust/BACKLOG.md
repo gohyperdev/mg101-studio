@@ -61,6 +61,27 @@
   `alias_string`) różnią się od v1 — tylko treść błędu, nie zachowanie.
 - `sha256_hex`: `format!` per bajt — mikro-optymalizacja (dowolny moment).
 
+## Z review E4 (naprawione lub zaplanowane)
+- [x] W1: kontrakt przestrzeni hashy (fingerprint nad rekordem urządzenia, nie
+  kontenerem pliku) — docstring `fingerprint.rs` + HLD §4. Egzekwować w E5.
+- [x] W2: `reorder_group` odrzuca nie-permutacje (multizbiór) — było: duplikat
+  `["a","a"]` gubił członka. Fix + test w obu store'ach.
+- [x] W3: `record_link` → `Result` (ciche gubienie provenance fałszowało sync).
+- [x] W4: warianty `LibraryError::Backend` / `InvalidInput` (koniec worka NotFound).
+- [x] W5: operacje wielokrokowe SQLite (remove/delete_group/add/remove_from_group)
+  w transakcjach — atomowa spójność grupa↔zwierciadło.
+- [x] W6: test „oba zmienione" w silniku sync (→ DeviceModified, świadomie).
+- [x] W7: wspólny `contract_suite` uruchamiany na MemoryStore i SqliteStore.
+- W3-reszta: metody odczytu store (`get`/`all`/`group`/`by_tag`/`links_*`) nadal
+  zwracają `Option`/`Vec` i połykają błędy backendu → `.ok()`/`filter_map`. Do
+  konwersji na `Result` na starcie E5 (transfer polega na wiarygodnym odczycie).
+- W6-reszta: rozważyć stan `Conflict` (slot i lib rozeszły się) — decyzja per
+  konflikt w E5 (HLD §5).
+- Drobne: newtype `ContentHash`/`ExactHash` zamiast aliasu `String` (silne
+  typowanie); `SlotView.writable` nieużywane (egzekwować regułę Factory albo
+  usunąć); `LibraryIndex.revision` martwe; blob w JSON (~4× narzut) vs
+  content-addressed store (HLD §3) — na desktop OK; indeks per-tag w SQLite.
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.

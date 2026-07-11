@@ -115,6 +115,16 @@ Po połączeniu urządzenia mamy trzy źródła patchy: sloty **User** i **Facto
 na sprzęcie oraz **Bibliotekę**. UI = trzy zakładki (User / Factory / Library).
 Kluczowe: pokazać relację między nimi, nie tylko listy.
 
+> **Uwaga implementacyjna (E4).** Zgodnie z ADR-0002 biblioteka jest
+> device-agnostyczna i **nie przechowuje** `CanonicalPatch` — trzyma wyłącznie
+> `blob` (bajty święte) + hashe; model kanoniczny wylicza Device Pack na żądanie.
+> Fingerprint liczony jest przez **maskowanie regionów** blobu (dane `MaskRange`
+> z profilu), nie przez normalizację kanoniczną. **Kontrakt przestrzeni hashy:**
+> wszystkie hashe (`content_hash`, `exact_hash`, `hash_at_transfer`) liczone są
+> nad **reprezentacją rekordu urządzenia** (to, co idzie do/ze slotu), nie nad
+> kontenerem pliku — inaczej patch z pliku po wgraniu byłby wiecznie
+> `DeviceModified`. Import pliku najpierw wyłuskuje rekord urządzenia.
+
 **Fingerprint.** `content_hash = H(canonical_normalized ‖ blob_significant)`.
 Kanonik normalizujemy (pomijamy nazwę i pola nieistotne dźwiękowo, konfigurowalne
 w profilu), żeby „ten sam dźwięk pod inną nazwą” dało ten sam hash dla dopasowania

@@ -191,6 +191,23 @@ mod tests {
     }
 
     #[test]
+    fn both_changed_resolves_to_device_modified() {
+        // Slot i Biblioteka odjechały od chwili transferu w RÓŻNE strony.
+        // Wg tabeli HLD §4 (5 stanów) urządzenie jest nadrzędne → DeviceModified.
+        // (Świadome: brak stanu Conflict — decyzja per konflikt należy do E5.)
+        let p = patch("p1", "cLIB", "eLIB", 7);
+        let idx = LibraryIndex::build([&p]);
+        let s = slot(Some(("cDEV", "eDEV")), true);
+        let l = link("p1", "eTRANSFER");
+        assert_eq!(
+            slot_sync_state(&s, Some(&l), &idx),
+            SyncState::DeviceModified {
+                patch_id: "p1".into()
+            }
+        );
+    }
+
+    #[test]
     fn dangling_link_falls_back_to_content_match() {
         // Link wskazuje usunięty patch; slot pasuje treścią do innego wpisu.
         let other = patch("p2", "cX", "eX", 1);

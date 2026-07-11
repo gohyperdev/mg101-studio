@@ -18,13 +18,33 @@ pub struct SqliteStore {
 }
 
 fn map_sqlite(e: rusqlite::Error) -> LibraryError {
-    // Błędy silnika składu mapujemy na NotFound z opisem — warstwa wyżej i tak
-    // traktuje je jako awarię we/wy; szczegół w treści.
-    LibraryError::NotFound(format!("sqlite: {e}"))
+    LibraryError::Backend(format!("sqlite: {e}"))
 }
 
 fn map_json(e: serde_json::Error) -> LibraryError {
-    LibraryError::NotFound(format!("json: {e}"))
+    LibraryError::Backend(format!("json: {e}"))
+}
+
+fn write_patch_on(conn: &Connection, patch: &LibraryPatch) -> Result<(), LibraryError> {
+    let doc = serde_json::to_string(patch).map_err(map_json)?;
+    conn.execute(
+        "INSERT INTO patches (id, revision, doc) VALUES (?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET revision=?2, doc=?3",
+        rusqlite::params![patch.id, patch.revision, doc],
+    )
+    .map_err(map_sqlite)?;
+    Ok(())
+}
+
+fn write_group_on(conn: &Connection, group: &Group) -> Result<(), LibraryError> {
+    let doc = serde_json::to_string(group).map_err(map_json)?;
+    conn.execute(
+        "INSERT INTO groups (id, doc) VALUES (?1, ?2)
+         ON CONFLICT(id) DO UPDATE SET doc=?2",
+        rusqlite::params![group.id, doc],
+    )
+    .map_err(map_sqlite)?;
+    Ok(())
 }
 
 impl SqliteStore {
@@ -65,27 +85,11 @@ impl SqliteStore {
     }
 
     fn write_patch(&self, patch: &LibraryPatch) -> Result<(), LibraryError> {
-        let doc = serde_json::to_string(patch).map_err(map_json)?;
-        self.conn
-            .execute(
-                "INSERT INTO patches (id, revision, doc) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(id) DO UPDATE SET revision=?2, doc=?3",
-                rusqlite::params![patch.id, patch.revision, doc],
-            )
-            .map_err(map_sqlite)?;
-        Ok(())
+        write_patch_on(&self.conn, patch)
     }
 
     fn write_group(&self, group: &Group) -> Result<(), LibraryError> {
-        let doc = serde_json::to_string(group).map_err(map_json)?;
-        self.conn
-            .execute(
-                "INSERT INTO groups (id, doc) VALUES (?1, ?2)
-                 ON CONFLICT(id) DO UPDATE SET doc=?2",
-                rusqlite::params![group.id, doc],
-            )
-            .map_err(map_sqlite)?;
-        Ok(())
+        write_group_on(&self.conn, group)
     }
 
     fn read_patch(&self, id: &PatchId) -> Result<Option<LibraryPatch>, LibraryError> {
@@ -138,16 +142,18 @@ impl LibraryStore for SqliteStore {
         let existing = self
             .read_patch(id)?
             .ok_or_else(|| LibraryError::NotFound(id.clone()))?;
-        self.conn
-            .execute("DELETE FROM patches WHERE id=?1", [id])
+        let groups = self.groups();
+        // Atomowo: usunięcie patcha i sprzątnięcie go z grup w jednej transakcji.
+        let tx = self.conn.transaction().map_err(map_sqlite)?;
+        tx.execute("DELETE FROM patches WHERE id=?1", [id])
             .map_err(map_sqlite)?;
-        // Sprzątanie przynależności do grup.
-        for mut g in self.groups() {
+        for mut g in groups {
             if g.members.contains(id) {
                 g.remove(id);
-                self.write_group(&g)?;
+                write_group_on(&tx, &g)?;
             }
         }
+        tx.commit().map_err(map_sqlite)?;
         Ok(existing)
     }
 
@@ -216,20 +222,20 @@ impl LibraryStore for SqliteStore {
     }
 
     fn delete_group(&mut self, id: &GroupId) -> Result<(), LibraryError> {
-        let n = self
-            .conn
-            .execute("DELETE FROM groups WHERE id=?1", [id])
-            .map_err(map_sqlite)?;
-        if n == 0 {
+        if self.group(id).is_none() {
             return Err(LibraryError::NotFound(id.clone()));
         }
-        // Usuń przynależność z patchy.
-        for mut p in self.all() {
+        let patches = self.all();
+        // Atomowo: usunięcie grupy i sprzątnięcie przynależności na patchach.
+        let tx = self.conn.transaction().map_err(map_sqlite)?;
+        tx.execute("DELETE FROM groups WHERE id=?1", [id])
+            .map_err(map_sqlite)?;
+        for mut p in patches {
             if p.groups.remove(id) {
-                self.write_patch(&p)?;
+                write_patch_on(&tx, &p)?;
             }
         }
-        Ok(())
+        tx.commit().map_err(map_sqlite)
     }
 
     fn add_to_group(&mut self, group: &GroupId, patch: &PatchId) -> Result<(), LibraryError> {
@@ -241,8 +247,11 @@ impl LibraryStore for SqliteStore {
             .ok_or_else(|| LibraryError::NotFound(group.clone()))?;
         g.push_unique(patch.clone());
         p.groups.insert(group.clone());
-        self.write_group(&g)?;
-        self.write_patch(&p)
+        // Atomowo: grupa i zwierciadło na patchu muszą być spójne.
+        let tx = self.conn.transaction().map_err(map_sqlite)?;
+        write_group_on(&tx, &g)?;
+        write_patch_on(&tx, &p)?;
+        tx.commit().map_err(map_sqlite)
     }
 
     fn remove_from_group(&mut self, group: &GroupId, patch: &PatchId) -> Result<(), LibraryError> {
@@ -250,23 +259,23 @@ impl LibraryStore for SqliteStore {
             .group(group)
             .ok_or_else(|| LibraryError::NotFound(group.clone()))?;
         g.remove(patch);
-        self.write_group(&g)?;
-        if let Some(mut p) = self.read_patch(patch)? {
-            if p.groups.remove(group) {
-                self.write_patch(&p)?;
-            }
+        let patch_mirror = self
+            .read_patch(patch)?
+            .and_then(|mut p| p.groups.remove(group).then_some(p));
+        let tx = self.conn.transaction().map_err(map_sqlite)?;
+        write_group_on(&tx, &g)?;
+        if let Some(p) = &patch_mirror {
+            write_patch_on(&tx, p)?;
         }
-        Ok(())
+        tx.commit().map_err(map_sqlite)
     }
 
     fn reorder_group(&mut self, group: &GroupId, order: Vec<PatchId>) -> Result<(), LibraryError> {
         let mut g = self
             .group(group)
             .ok_or_else(|| LibraryError::NotFound(group.clone()))?;
-        let same_set =
-            order.len() == g.members.len() && order.iter().all(|p| g.members.contains(p));
-        if !same_set {
-            return Err(LibraryError::NotFound(format!(
+        if !crate::store::is_permutation(&order, &g.members) {
+            return Err(LibraryError::InvalidInput(format!(
                 "kolejność nie jest permutacją członków grupy {group}"
             )));
         }
@@ -274,14 +283,16 @@ impl LibraryStore for SqliteStore {
         self.write_group(&g)
     }
 
-    fn record_link(&mut self, link: DeviceSlotLink) {
-        if let Ok(doc) = serde_json::to_string(&link) {
-            let _ = self.conn.execute(
+    fn record_link(&mut self, link: DeviceSlotLink) -> Result<(), LibraryError> {
+        let doc = serde_json::to_string(&link).map_err(map_json)?;
+        self.conn
+            .execute(
                 "INSERT INTO links (serial, bank, idx, doc) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(serial, bank, idx) DO UPDATE SET doc=?4",
                 rusqlite::params![link.device_serial, link.slot.bank, link.slot.index, doc],
-            );
-        }
+            )
+            .map_err(map_sqlite)?;
+        Ok(())
     }
 
     fn links_for_device(&self, serial: &str) -> Vec<DeviceSlotLink> {
@@ -394,7 +405,8 @@ mod tests {
             library_patch_id: "p1".into(),
             hash_at_transfer: "e-p1".into(),
             transferred_at: 100,
-        });
+        })
+        .unwrap();
         assert_eq!(
             s.link_for_slot("SN1", &slot).unwrap().library_patch_id,
             "p1"

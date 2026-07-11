@@ -21,6 +21,10 @@ pub enum LibraryError {
         expected: u64,
         actual: u64,
     },
+    /// Awaria backendu składu (we/wy, (de)serializacja) — nie mylić z NotFound.
+    Backend(String),
+    /// Niepoprawne argumenty operacji (np. reorder nie jest permutacją).
+    InvalidInput(String),
 }
 
 impl std::fmt::Display for LibraryError {
@@ -36,11 +40,25 @@ impl std::fmt::Display for LibraryError {
                 f,
                 "konflikt rewizji patcha {patch_id}: oczekiwano {expected}, jest {actual}"
             ),
+            LibraryError::Backend(m) => write!(f, "awaria składu: {m}"),
+            LibraryError::InvalidInput(m) => write!(f, "niepoprawne dane: {m}"),
         }
     }
 }
 
 impl std::error::Error for LibraryError {}
+
+/// Czy `order` jest permutacją `members` (ten sam multizbiór elementów).
+pub(crate) fn is_permutation(order: &[PatchId], members: &[PatchId]) -> bool {
+    if order.len() != members.len() {
+        return false;
+    }
+    let mut a = order.to_vec();
+    let mut b = members.to_vec();
+    a.sort();
+    b.sort();
+    a == b
+}
 
 /// Kontrakt składu Biblioteki. Silniki (sync, transfer) i UI zależą od tego
 /// traitu, nie od konkretnego backendu.
@@ -70,7 +88,9 @@ pub trait LibraryStore {
     fn reorder_group(&mut self, group: &GroupId, order: Vec<PatchId>) -> Result<(), LibraryError>;
 
     // --- Provenance ---
-    fn record_link(&mut self, link: DeviceSlotLink);
+    /// Zapisuje ślad transferu. Zwraca błąd, gdy backend nie utrwali linku
+    /// (cichy zanik provenance fałszowałby stany sync przy następnym połączeniu).
+    fn record_link(&mut self, link: DeviceSlotLink) -> Result<(), LibraryError>;
     fn links_for_device(&self, serial: &str) -> Vec<DeviceSlotLink>;
     fn link_for_slot(&self, serial: &str, slot: &SlotAddr) -> Option<DeviceSlotLink>;
 
@@ -235,11 +255,10 @@ impl LibraryStore for MemoryStore {
             .groups
             .get_mut(group)
             .ok_or_else(|| LibraryError::NotFound(group.clone()))?;
-        // Nowa kolejność musi być permutacją obecnych członków.
-        let same_set =
-            order.len() == g.members.len() && order.iter().all(|p| g.members.contains(p));
-        if !same_set {
-            return Err(LibraryError::NotFound(format!(
+        // Nowa kolejność musi być PERMUTACJĄ obecnych członków (multizbiór, nie
+        // tylko podzbiór — inaczej ["a","a"] przeszłoby dla {a,b} i zgubiło b).
+        if !is_permutation(&order, &g.members) {
+            return Err(LibraryError::InvalidInput(format!(
                 "kolejność nie jest permutacją członków grupy {group}"
             )));
         }
@@ -247,11 +266,12 @@ impl LibraryStore for MemoryStore {
         Ok(())
     }
 
-    fn record_link(&mut self, link: DeviceSlotLink) {
+    fn record_link(&mut self, link: DeviceSlotLink) -> Result<(), LibraryError> {
         // Jeden aktualny link per (egzemplarz, slot) — zastąp poprzedni.
         self.links
             .retain(|l| !(l.device_serial == link.device_serial && l.slot == link.slot));
         self.links.push(link);
+        Ok(())
     }
 
     fn links_for_device(&self, serial: &str) -> Vec<DeviceSlotLink> {
@@ -404,7 +424,8 @@ mod tests {
             library_patch_id: "p1".into(),
             hash_at_transfer: "e1".into(),
             transferred_at: 10,
-        });
+        })
+        .unwrap();
         // Nowy transfer do tego samego slotu zastępuje link.
         s.record_link(DeviceSlotLink {
             device_serial: "SN1".into(),
@@ -412,7 +433,8 @@ mod tests {
             library_patch_id: "p2".into(),
             hash_at_transfer: "e2".into(),
             transferred_at: 20,
-        });
+        })
+        .unwrap();
         assert_eq!(s.links_for_device("SN1").len(), 1);
         assert_eq!(
             s.link_for_slot("SN1", &slot).unwrap().library_patch_id,
