@@ -1,0 +1,384 @@
+// UI desktop MG101 Studio (Slint) — trzy panele: [zakładki+lista] | [edytor] |
+// [inspektor]. Cała logika jest w Rust (ViewModel); tu tylko widok i wywołania
+// callbacków. Struktury lustrzane do desktop::vm.
+
+import { Button, ListView, LineEdit, TabWidget, CheckBox, ComboBox, VerticalBox, HorizontalBox, GroupBox, ScrollView } from "std-widgets.slint";
+
+export struct PatchRowUi {
+    id: string,
+    slot: int,
+    name: string,
+    origin: string,
+    ir: bool,
+}
+
+export struct ParamRowUi {
+    name: string,
+    value: int,
+    minimum: int,
+    maximum: int,
+}
+
+export struct BlockRowUi {
+    block: string,
+    model-name: string,
+    bypassed: bool,
+    params: [ParamRowUi],
+}
+
+export struct DetailUi {
+    id: string,
+    name: string,
+    bpm: int,
+    revision: int,
+    ir: bool,
+    blocks: [BlockRowUi],
+}
+
+export struct SlotRowUi {
+    index: int,
+    name: string,
+    occupied: bool,
+    writable: bool,
+}
+
+export component AppWindow inherits Window {
+    title: root.t-app-title;
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    min-width: 820px;
+    min-height: 520px;
+
+    // --- Dane (wypełniane z Rust) ---
+    in property <[PatchRowUi]> patches;
+    in property <[SlotRowUi]> slots;
+    in property <DetailUi> detail;
+    in property <bool> has-selection;
+    in property <string> current-id;
+    in property <int> active-tab;          // 0=User 1=Factory 2=Library
+    in property <string> changes-text;
+    in property <string> error-text;
+    in property <int> lang-index;          // 0=EN 1=PL
+
+    // --- Etykiety (i18n z Rust) ---
+    in property <string> t-app-title;
+    in property <string> t-tab-user;
+    in property <string> t-tab-factory;
+    in property <string> t-tab-library;
+    in property <string> t-no-selection;
+    in property <string> t-chain;
+    in property <string> t-bypass;
+    in property <string> t-name;
+    in property <string> t-bpm;
+    in property <string> t-changes;
+    in property <string> t-binary;
+    in property <string> t-agent;
+    in property <string> t-mcp;
+    in property <string> t-no-changes;
+    in property <string> t-duplicate;
+    in property <string> t-delete;
+    in property <string> t-revert;
+    in property <string> t-language;
+
+    // --- Zdarzenia (obsługa w Rust) ---
+    callback switch-tab(int);
+    callback switch-lang(int);
+    callback select(string);
+    callback set-name(string, string);          // id, text
+    callback set-bpm(string, string);           // id, text
+    callback set-param(string, string, string, float); // id, block, param, value
+    callback set-bypass(string, string, bool);  // id, block, bypassed
+    callback duplicate(string);
+    callback delete-patch(string);
+    callback revert();
+    callback dismiss-error();
+
+    HorizontalBox {
+        padding: 0px;
+
+        // ===== Panel 1: zakładki + lista =====
+        Rectangle {
+            width: 320px;
+            background: #1e1e24;
+            VerticalBox {
+                padding: 8px;
+                spacing: 6px;
+
+                // zakładki User / Factory / Library
+                HorizontalBox {
+                    spacing: 4px;
+                    Button {
+                        text: root.t-tab-user;
+                        primary: root.active-tab == 0;
+                        clicked => { root.switch-tab(0); }
+                    }
+                    Button {
+                        text: root.t-tab-factory;
+                        primary: root.active-tab == 1;
+                        clicked => { root.switch-tab(1); }
+                    }
+                    Button {
+                        text: root.t-tab-library;
+                        primary: root.active-tab == 2;
+                        clicked => { root.switch-tab(2); }
+                    }
+                }
+
+                // lista biblioteki (zakładka Library)
+                if root.active-tab == 2: ListView {
+                    for row[i] in root.patches: Rectangle {
+                        height: 44px;
+                        background: row.id == root.current-id ? #3a3a48 : transparent;
+                        TouchArea { clicked => { root.select(row.id); } }
+                        HorizontalBox {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            Text {
+                                width: 26px;
+                                text: row.slot < 10 ? "0" + row.slot : row.slot;
+                                color: #8a8a96;
+                                vertical-alignment: center;
+                            }
+                            VerticalBox {
+                                padding: 0px;
+                                spacing: 1px;
+                                Text {
+                                    text: row.name == "" ? "—" : row.name;
+                                    color: white;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: row.origin;
+                                    color: #8a8a96;
+                                    font-size: 11px;
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: row.ir ? "IR" : "";
+                                color: #6ab0ff;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // widok slotów urządzenia (zakładki User/Factory)
+                if root.active-tab != 2: ListView {
+                    for s[i] in root.slots: Rectangle {
+                        height: 36px;
+                        HorizontalBox {
+                            padding-left: 8px;
+                            spacing: 8px;
+                            Text {
+                                width: 30px;
+                                text: s.index;
+                                color: #8a8a96;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: s.occupied ? s.name : "(pusty)";
+                                color: s.occupied ? white : #6a6a76;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: s.writable ? "" : "🔒";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // pasek akcji
+                HorizontalBox {
+                    spacing: 4px;
+                    Button {
+                        text: root.t-duplicate;
+                        enabled: root.has-selection;
+                        clicked => { root.duplicate(root.current-id); }
+                    }
+                    Button {
+                        text: root.t-delete;
+                        enabled: root.has-selection;
+                        clicked => { root.delete-patch(root.current-id); }
+                    }
+                    Button {
+                        text: root.t-revert;
+                        clicked => { root.revert(); }
+                    }
+                }
+
+                // wybór języka
+                HorizontalBox {
+                    spacing: 6px;
+                    Text { text: root.t-language + ":"; color: #8a8a96; vertical-alignment: center; }
+                    ComboBox {
+                        model: ["EN", "PL"];
+                        current-index: root.lang-index;
+                        selected(v) => { root.switch-lang(self.current-index); }
+                    }
+                }
+            }
+        }
+
+        // ===== Panel 2: edytor =====
+        Rectangle {
+            horizontal-stretch: 1;
+            background: #26262e;
+            VerticalBox {
+                padding: 12px;
+                spacing: 8px;
+
+                if !root.has-selection: Text {
+                    text: root.t-no-selection;
+                    color: #8a8a96;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                if root.has-selection: HorizontalBox {
+                    spacing: 12px;
+                    VerticalBox {
+                        padding: 0px;
+                        Text { text: root.t-name; color: #8a8a96; font-size: 11px; }
+                        LineEdit {
+                            text: root.detail.name;
+                            accepted(v) => { root.set-name(root.detail.id, v); }
+                        }
+                    }
+                    VerticalBox {
+                        padding: 0px;
+                        width: 120px;
+                        Text { text: root.t-bpm; color: #8a8a96; font-size: 11px; }
+                        LineEdit {
+                            text: root.detail.bpm;
+                            input-type: number;
+                            accepted(v) => { root.set-bpm(root.detail.id, v); }
+                        }
+                    }
+                    VerticalBox {
+                        padding: 0px;
+                        Text { text: "rev"; color: #8a8a96; font-size: 11px; }
+                        Text { text: root.detail.revision; color: white; }
+                    }
+                }
+
+                if root.has-selection: Text {
+                    text: root.t-chain;
+                    color: white;
+                    font-size: 14px;
+                }
+
+                if root.has-selection: ScrollView {
+                    VerticalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        for blk[bi] in root.detail.blocks: Rectangle {
+                            background: #2f2f38;
+                            border-radius: 6px;
+                            VerticalBox {
+                                padding: 8px;
+                                spacing: 4px;
+                                HorizontalBox {
+                                    Text {
+                                        text: blk.block + "  ·  " + blk.model-name;
+                                        color: white;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    CheckBox {
+                                        text: root.t-bypass;
+                                        checked: blk.bypassed;
+                                        toggled => { root.set-bypass(root.detail.id, blk.block, self.checked); }
+                                    }
+                                }
+                                for p[pi] in blk.params: HorizontalBox {
+                                    spacing: 8px;
+                                    Text {
+                                        width: 120px;
+                                        text: p.name;
+                                        color: #c4c4cc;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        width: 46px;
+                                        text: p.value;
+                                        color: white;
+                                        vertical-alignment: center;
+                                    }
+                                    Button {
+                                        text: "−";
+                                        clicked => { root.set-param(root.detail.id, blk.block, p.name, p.value - 1); }
+                                    }
+                                    Button {
+                                        text: "+";
+                                        clicked => { root.set-param(root.detail.id, blk.block, p.name, p.value + 1); }
+                                    }
+                                    Text {
+                                        text: p.minimum + "…" + p.maximum;
+                                        color: #6a6a76;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ===== Panel 3: inspektor =====
+        Rectangle {
+            width: 340px;
+            background: #1e1e24;
+            VerticalBox {
+                padding: 8px;
+                TabWidget {
+                    Tab {
+                        title: root.t-changes;
+                        ScrollView {
+                            Text {
+                                text: root.changes-text == "" ? root.t-no-changes : root.changes-text;
+                                color: #c4c4cc;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    Tab {
+                        title: root.t-binary;
+                        Text { text: "hex: " + root.detail.id; color: #8a8a96; }
+                    }
+                    Tab {
+                        title: root.t-agent;
+                        Text { text: root.t-agent; color: #8a8a96; }
+                    }
+                    Tab {
+                        title: root.t-mcp;
+                        Text { text: "stdio: mg101-mcp"; color: #8a8a96; }
+                    }
+                }
+            }
+        }
+    }
+
+    // pasek błędu (na dole, gdy niepusty)
+    if root.error-text != "": Rectangle {
+        y: root.height - 40px;
+        height: 40px;
+        background: #7a2020;
+        HorizontalBox {
+            padding-left: 12px;
+            Text {
+                text: root.error-text;
+                color: white;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "✕"; clicked => { root.dismiss-error(); } }
+        }
+    }
+}

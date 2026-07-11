@@ -5,6 +5,9 @@ on:
   pull_request:
     paths: ["rust/**", ".github/workflows/rust.yml"]
 jobs:
+  # Build+test całego workspace (w tym desktop/Slint — dowód #4 cross-platform)
+  # na macOS i Windows. GUI Slint nie startuje w `cargo test` (okno tylko w
+  # main()); testy to warstwa VM/i18n, przenośna między systemami.
   build-test:
     strategy:
       fail-fast: false
@@ -23,6 +26,8 @@ jobs:
         run: cargo build --workspace --verbose
       - name: Test
         run: cargo test --workspace --verbose
+      - name: Build desktop (Slint) — dowód #4
+        run: cargo build -p mg101-desktop --verbose
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Format check
