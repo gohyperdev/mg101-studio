@@ -223,12 +223,43 @@ fn refresh(ui: &AppWindow, vm: &mut Vm) {
                     .join("\n")
             };
             ui.set_changes_text(text.into());
+
+            // Inspektor binarny (W5): grupy logiczne z hex/dec.
+            let bin: Vec<BinGroupUi> = vm
+                .binary_view(&id)
+                .into_iter()
+                .map(|g| {
+                    let hex = g
+                        .bytes
+                        .iter()
+                        .map(|b| format!("{:02X}", *b as u8))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let dec = g
+                        .bytes
+                        .iter()
+                        .map(|b| b.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    BinGroupUi {
+                        label: g.label.into(),
+                        addr: format!("0x{:04X}", g.offset).into(),
+                        kind: g.kind.into(),
+                        length: g.length as i32,
+                        hex: hex.into(),
+                        dec: dec.into(),
+                        truncated: g.truncated,
+                    }
+                })
+                .collect();
+            ui.set_bin_groups(ModelRc::new(VecModel::from(bin)));
         }
         None => {
             ui.set_has_selection(false);
             ui.set_current_id(SharedString::new());
             ui.set_detail(empty_detail());
             ui.set_changes_text(SharedString::new());
+            ui.set_bin_groups(ModelRc::new(VecModel::from(Vec::<BinGroupUi>::new())));
         }
     }
 
@@ -265,6 +296,21 @@ fn refresh(ui: &AppWindow, vm: &mut Vm) {
     ui.set_cfg_key(cfg.api_key.clone().into());
 
     ui.set_error_text(vm.last_error().unwrap_or("").into());
+}
+
+/// Wykrywa podłączone urządzenie (po nazwach portów MIDI) i ustawia status w UI.
+/// Nie dotyka danych banków — te wypełnia dopiero zrzut.
+fn detect_device(ui: &AppWindow) {
+    match mg101_desktop::device::detect() {
+        Some(d) => {
+            ui.set_device_label(format!("{} {}", d.manufacturer, d.model).into());
+            ui.set_device_connected(true);
+        }
+        None => {
+            ui.set_device_label("brak urządzenia".into());
+            ui.set_device_connected(false);
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -333,6 +379,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     apply_labels(&ui, &vm.borrow());
     refresh(&ui, &mut vm.borrow_mut());
+    detect_device(&ui);
+    // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
+    let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -440,6 +489,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Połącz i zrzuć banki (W2): startuje wątek zrzutu dla wykrytego urządzenia.
+    {
+        let uw = ui.as_weak();
+        let dslot = dumper.clone();
+        ui.on_connect_dump(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            if dslot.borrow().is_some() {
+                return; // zrzut już trwa
+            }
+            let Some(dev) = mg101_desktop::device::detect() else {
+                ui.set_dump_status("urządzenie odłączone".into());
+                ui.set_device_connected(false);
+                return;
+            };
+            ui.set_dump_busy(true);
+            ui.set_dump_status("łączenie…".into());
+            *dslot.borrow_mut() = Some(mg101_desktop::device::Dumper::start(
+                dev.port_needle,
+                dev.slots_per_bank,
+            ));
+        });
+    }
+
     // Zmiana języka: przelicz etykiety + odśwież.
     {
         let uw = ui.as_weak();
@@ -526,6 +598,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // Odśwież tylko po realnej pracy — nie przebudowuj UI 25×/s bez potrzeby.
             if did_work || done {
+                refresh(&ui, &mut vmc.borrow_mut());
+            }
+        });
+    }
+
+    // Pompa zrzutu urządzenia (W2) + okresowa detekcja hotplug (W6). Osobny
+    // Timer, bo pompa agenta wychodzi wcześnie gdy nie ma przebiegu.
+    let device_pump = Timer::default();
+    {
+        use mg101_desktop::device::DumpMsg;
+        use mg101_desktop::vm::SlotRow;
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let dslot = dumper.clone();
+        let tick = RefCell::new(0u32);
+        device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+            let Some(ui) = uw.upgrade() else { return };
+            // Detekcja hotplug co ~2 s (gdy nie trwa zrzut).
+            {
+                let mut t = tick.borrow_mut();
+                *t = t.wrapping_add(1);
+                if t.is_multiple_of(20) && dslot.borrow().is_none() {
+                    detect_device(&ui);
+                }
+            }
+            if dslot.borrow().is_none() {
+                return;
+            }
+            let msgs = dslot
+                .borrow()
+                .as_ref()
+                .map(|d| d.poll())
+                .unwrap_or_default();
+            let mut finished = false;
+            for m in msgs {
+                match m {
+                    DumpMsg::Progress { done, total } => {
+                        ui.set_dump_status(format!("zrzut {done}/{total} slotów…").into());
+                    }
+                    DumpMsg::Done { user, factory } => {
+                        let to_rows = |dump: Vec<mg101_desktop::device::SlotDump>| {
+                            dump.into_iter()
+                                .map(|s| SlotRow {
+                                    index: s.index,
+                                    name: String::new(), // nazwa wire nieodczytana (BACKLOG W2)
+                                    occupied: s.occupied(),
+                                    writable: s.bank == "user",
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        let (nu, nf) = (user.len(), factory.len());
+                        vmc.borrow_mut()
+                            .set_device_banks(to_rows(user), to_rows(factory));
+                        ui.set_dump_status(format!("zrzucono User {nu} + Factory {nf}").into());
+                        finished = true;
+                    }
+                    DumpMsg::Error(e) => {
+                        vmc.borrow_mut().report_error(e);
+                        ui.set_dump_status("błąd zrzutu — patrz komunikat".into());
+                        finished = true;
+                    }
+                }
+            }
+            if finished {
+                *dslot.borrow_mut() = None;
+                ui.set_dump_busy(false);
                 refresh(&ui, &mut vmc.borrow_mut());
             }
         });

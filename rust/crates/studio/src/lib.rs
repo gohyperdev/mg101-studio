@@ -196,6 +196,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             Command::ListModels { block } => Ok(self.list_models(block)),
             Command::GetProfile => Ok(self.get_profile()),
             Command::GetDiff { patch_id } => self.get_diff(patch_id),
+            Command::GetRaw { patch_id } => self.get_raw(patch_id),
             Command::SetParameter {
                 target,
                 block,
@@ -412,6 +413,119 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             "blocks": blocks,
             "namedFields": named_fields,
         })
+    }
+
+    /// Surowe bajty rekordu pogrupowane logicznie (inspektor binarny). Region
+    /// próbek IR (0xD2.., 8 KB) jest streszczony — zwracamy podgląd, nie 8 KB.
+    fn get_raw(&self, id: &PatchId) -> Result<Value, ExecError> {
+        const IR_PREVIEW: usize = 32;
+        let item = self.get_patch(id)?;
+        let rec = self.record(&item)?;
+        let data = rec.data();
+        let p = self.profile;
+
+        // Bajt jako grupa: etykieta, offset, kind, bajty (+ opcjonalny podgląd).
+        let byte_at = |o: usize| data.get(o).copied().unwrap_or(0) as i64;
+        let slice = |start: usize, len: usize| -> Vec<i64> {
+            (start..(start + len).min(data.len()))
+                .map(|o| data[o] as i64)
+                .collect()
+        };
+        let mut groups: Vec<Value> = Vec::new();
+        let mut push = |label: String, offset: usize, kind: &str, bytes: Vec<i64>| {
+            groups.push(json!({
+                "label": label, "offset": offset, "kind": kind,
+                "length": bytes.len(), "bytes": bytes,
+            }));
+        };
+
+        // Nagłówek: indeks slotu (0x00..0x04).
+        push("slot.index".into(), 0, "header", slice(0, 4));
+
+        // Bloki łańcucha: selektor (model_id + bypass) i bajty parametrów.
+        for block in &p.blocks {
+            let sel = byte_at(block.selector_offset);
+            let model_id = sel & 0x3F;
+            let bypass = (sel & 0x40) != 0;
+            let name = self
+                .catalog
+                .model(&block.id, model_id)
+                .map(|m| m.display_name.clone())
+                .unwrap_or_else(|| format!("model {model_id}"));
+            push(
+                format!(
+                    "{} = {name}{}",
+                    block.id,
+                    if bypass { " (bypass)" } else { "" }
+                ),
+                block.selector_offset,
+                "selector",
+                vec![sel],
+            );
+            for (i, &off) in block.parameter_offsets.iter().enumerate() {
+                push(
+                    format!("{}.param[{i}]", block.id),
+                    off,
+                    "param",
+                    vec![byte_at(off)],
+                );
+            }
+        }
+
+        // BPM (dwa bajty 7-bitowe).
+        push(
+            "bpm".into(),
+            p.bpm.msb_offset,
+            "meta",
+            vec![byte_at(p.bpm.msb_offset), byte_at(p.bpm.lsb_offset)],
+        );
+        // Nazwa presetu (zakres) — także zdekodowana w etykiecie.
+        push(
+            format!("nazwa = \"{}\"", rec.name()),
+            p.patch_name.offset,
+            "name",
+            slice(p.patch_name.offset, p.patch_name.length),
+        );
+        // Pola nazwane (sortowane po offsecie dla stabilnej kolejności).
+        let mut nf: Vec<_> = p.named_fields.iter().collect();
+        nf.sort_by_key(|(_, f)| f.offset);
+        for (k, f) in nf {
+            push(
+                format!("pole: {k}"),
+                f.offset,
+                "meta",
+                vec![byte_at(f.offset)],
+            );
+        }
+
+        // Region IR: marker+nazwa, RIFF, próbki (streszczone).
+        let ir_marker = 0x82usize;
+        let ir_riff = 0xA6usize;
+        let ir_samples = 0xD2usize;
+        if data.len() > ir_marker {
+            push(
+                "ir.marker+name".into(),
+                ir_marker,
+                "ir",
+                slice(ir_marker, ir_riff - ir_marker),
+            );
+            push(
+                "ir.riff_header".into(),
+                ir_riff,
+                "ir",
+                slice(ir_riff, ir_samples - ir_riff),
+            );
+            let sample_len = data.len().saturating_sub(ir_samples);
+            groups.push(json!({
+                "label": format!("ir.samples ({sample_len} B, podgląd {IR_PREVIEW})"),
+                "offset": ir_samples, "kind": "ir",
+                "length": sample_len,
+                "bytes": slice(ir_samples, IR_PREVIEW),
+                "truncated": true,
+            }));
+        }
+
+        Ok(json!({ "size": data.len(), "groups": groups }))
     }
 
     fn get_diff(&self, id: &PatchId) -> Result<Value, ExecError> {

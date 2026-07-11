@@ -54,6 +54,16 @@ export struct SlotRowUi {
     writable: bool,
 }
 
+export struct BinGroupUi {
+    label: string,
+    addr: string,       // offset w hex, gotowy (np. "0x0004")
+    kind: string,       // header|selector|param|meta|name|ir
+    length: int,
+    hex: string,        // bajty w hex (gotowe do wyświetlenia)
+    dec: string,        // bajty dziesiętnie
+    truncated: bool,
+}
+
 export component AppWindow inherits Window {
     title: root.t-app-title;
     preferred-width: 1100px;
@@ -71,6 +81,16 @@ export component AppWindow inherits Window {
     in property <string> changes-text;
     in property <string> error-text;
     in property <int> lang-index;          // 0=EN 1=PL
+
+    // Inspektor binarny (W5)
+    in property <[BinGroupUi]> bin-groups;
+    property <bool> bin-hex: true;         // true=hex, false=dec
+
+    // Urządzenie (W2/W6): wykryty model + status zrzutu
+    in property <string> device-label;     // np. "NUX MG-101" lub "brak urządzenia"
+    in property <bool> device-connected;
+    in property <bool> dump-busy;
+    in property <string> dump-status;      // postęp/komunikat zrzutu
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -133,6 +153,7 @@ export component AppWindow inherits Window {
     callback dismiss-error();
     callback send-message(string);                     // treść wiadomości do agenta
     callback save-settings(int, string, string, string); // provider, endpoint, model, key
+    callback connect-dump();                           // W2: połącz i zrzuć banki
 
     HorizontalBox {
         padding: 0px;
@@ -201,6 +222,38 @@ export component AppWindow inherits Window {
                                 color: #6ab0ff;
                                 vertical-alignment: center;
                             }
+                        }
+                    }
+                }
+
+                // pasek urządzenia (zakładki User/Factory) — status + zrzut (W2/W6)
+                if root.active-tab != 2: Rectangle {
+                    height: 52px;
+                    background: #26262e;
+                    border-radius: 5px;
+                    VerticalBox {
+                        padding: 5px;
+                        spacing: 2px;
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 6px;
+                            Text {
+                                text: (root.device-connected ? "🎸 " : "⚪ ") + root.device-label;
+                                color: root.device-connected ? #7fd98a : #8a8a96;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button {
+                                text: "Połącz i zrzuć";
+                                enabled: root.device-connected && !root.dump-busy;
+                                clicked => { root.connect-dump(); }
+                            }
+                        }
+                        if root.dump-status != "": Text {
+                            text: root.dump-status;
+                            color: #8a8a96;
+                            font-size: 10px;
                         }
                     }
                 }
@@ -427,28 +480,94 @@ export component AppWindow inherits Window {
                     }
                     Tab {
                         title: root.t-binary;
-                        Text { text: root.t-binary + ": " + root.detail.id; color: #8a8a96; }
+                        VerticalBox {
+                            padding: 4px;
+                            spacing: 4px;
+                            HorizontalBox {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: root.t-binary + " · " + root.bin-groups.length + " pól";
+                                    color: #8a8a96;
+                                    vertical-alignment: center;
+                                }
+                                Button {
+                                    text: root.bin-hex ? "HEX" : "DEC";
+                                    clicked => { root.bin-hex = !root.bin-hex; }
+                                }
+                            }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalBox {
+                                    padding: 0px;
+                                    spacing: 1px;
+                                    for g[i] in root.bin-groups: Rectangle {
+                                        background: Math.mod(i, 2) == 0 ? #22222a : #1e1e24;
+                                        HorizontalBox {
+                                            padding: 3px;
+                                            spacing: 8px;
+                                            // Offset (hex) — stała szerokość.
+                                            Text {
+                                                width: 52px;
+                                                text: g.addr;
+                                                color: #6a6a76;
+                                                font-family: "monospace";
+                                                font-size: 11px;
+                                            }
+                                            // Etykieta pola — kolor wg rodzaju.
+                                            Text {
+                                                width: 150px;
+                                                text: g.label;
+                                                color: g.kind == "selector" ? #7fb4ff
+                                                    : (g.kind == "param" ? #c4c4cc
+                                                    : (g.kind == "name" ? #7fd98a
+                                                    : (g.kind == "ir" ? #d9a97f
+                                                    : (g.kind == "header" ? #b08ad0 : #8a8a96))));
+                                                font-size: 11px;
+                                                overflow: elide;
+                                            }
+                                            // Bajty — hex lub dec wg przełącznika.
+                                            Text {
+                                                text: (root.bin-hex ? g.hex : g.dec)
+                                                    + (g.truncated ? " …(" + g.length + " B)" : "");
+                                                color: white;
+                                                font-family: "monospace";
+                                                font-size: 11px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Tab {
                         title: root.t-agent;
                         VerticalBox {
                             padding: 4px;
                             spacing: 4px;
-                            ScrollView {
+                            chat-scroll := ScrollView {
                                 vertical-stretch: 1;
-                                VerticalBox {
-                                    padding: 0px;
+                                // Viewport o szerokości okna → Text zawija się i
+                                // wysokość treści liczy się poprawnie (pełny scroll).
+                                viewport-width: self.visible-width;
+                                VerticalLayout {
+                                    width: chat-scroll.visible-width;
+                                    padding: 4px;
                                     spacing: 6px;
                                     for m[i] in root.chat-rows: Rectangle {
                                         background: m.role == "user" ? #2a3550
                                             : (m.role == "tool" ? #2a2a30 : #2f3a2f);
                                         border-radius: 5px;
-                                        VerticalBox {
+                                        VerticalLayout {
                                             padding: 6px;
                                             spacing: 2px;
                                             Text {
-                                                text: m.role;
-                                                color: #8a8a96;
+                                                // Rola po ludzku, wyróżniona kolorem roli.
+                                                text: m.role == "user" ? "Ty"
+                                                    : (m.role == "tool" ? "narzędzie" : "asystent");
+                                                color: m.role == "user" ? #9db4ff
+                                                    : (m.role == "tool" ? #b0b0bc : #9bd99b);
                                                 font-size: 10px;
                                             }
                                             Text {

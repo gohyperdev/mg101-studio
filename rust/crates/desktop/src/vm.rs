@@ -107,6 +107,20 @@ pub struct ByteChange {
     pub after: i64,
 }
 
+/// Grupa logiczna surowych bajtów (inspektor binarny). `bytes` to podgląd —
+/// dla dużych regionów (próbki IR) skrócony, patrz `truncated`/`length`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryGroup {
+    pub label: String,
+    pub offset: usize,
+    /// Rodzaj: `header|selector|param|meta|name|ir` (do kolorowania w UI).
+    pub kind: String,
+    /// Pełna długość regionu (może być > liczby bajtów w `bytes`).
+    pub length: usize,
+    pub bytes: Vec<i64>,
+    pub truncated: bool,
+}
+
 /// Opcja modelu w pickerze bloku.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelOption {
@@ -424,6 +438,43 @@ impl<S: LibraryStore> ViewModel<S> {
                         offset: d.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize,
                         before: d.get("before").and_then(Value::as_i64).unwrap_or(0),
                         after: d.get("after").and_then(Value::as_i64).unwrap_or(0),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Surowe bajty rekordu pogrupowane logicznie (inspektor binarny W5).
+    pub fn binary_view(&mut self, patch_id: &str) -> Vec<BinaryGroup> {
+        let v = match self.exec(&Command::GetRaw {
+            patch_id: patch_id.to_owned(),
+        }) {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+        v.get("groups")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .map(|g| BinaryGroup {
+                        label: g
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        offset: g.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize,
+                        kind: g
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("meta")
+                            .to_owned(),
+                        length: g.get("length").and_then(Value::as_u64).unwrap_or(0) as usize,
+                        bytes: g
+                            .get("bytes")
+                            .and_then(Value::as_array)
+                            .map(|b| b.iter().filter_map(Value::as_i64).collect())
+                            .unwrap_or_default(),
+                        truncated: g.get("truncated").and_then(Value::as_bool).unwrap_or(false),
                     })
                     .collect()
             })
@@ -785,6 +836,25 @@ mod tests {
         let rows = vm.rows();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|r| r.patch_id == "p1"));
+    }
+
+    #[test]
+    fn binary_view_groups_cover_header_blocks_and_ir() {
+        let mut vm = vm();
+        let groups = vm.binary_view("p1");
+        assert!(!groups.is_empty());
+        // Nagłówek indeksu slotu na offsecie 0.
+        assert_eq!(groups[0].offset, 0);
+        assert_eq!(groups[0].kind, "header");
+        // Jest 11 selektorów bloków (łańcuch MG-101).
+        assert_eq!(groups.iter().filter(|g| g.kind == "selector").count(), 11);
+        // Region próbek IR streszczony (truncated, length ≫ liczba bajtów podglądu).
+        let ir = groups
+            .iter()
+            .find(|g| g.truncated)
+            .expect("streszczony region IR");
+        assert!(ir.length > ir.bytes.len());
+        assert_eq!(ir.kind, "ir");
     }
 
     #[test]

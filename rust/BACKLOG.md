@@ -240,3 +240,16 @@
   kontrolowanym eksportem z QuickTone (evidence_policy: confirmed).
 - **Etykiety wartości enum/list** — brak w katalogu (`value_labels`=0); modele mają UET
   ciągłe (2/3) lub toggle (7); brak realnych list wartości do nazwania.
+
+## W7 — czat agenta (follow-up)
+- **Auto-scroll na dół** przy nowej wiadomości — wymaga sterowania `viewport-y`
+  ScrollView z Rust (po refresh). Teraz scroll działa (viewport-width + szerokość
+  VerticalLayout), ale nie dojeżdża sam na dół. Do dodania: Timer/prop w oknie.
+
+## W2 — import z urządzenia: dekoder wire→kanoniczny (RE)
+- Rekord wire (ramka `0B`, payload 189 B w capture 04b / 62 B w pasywnym dumpie)
+  używa INNEGO kodowania niż plik 8402 B (grupy ~3-bajtowe; `mg101-probe/captures`).
+  Import z urządzenia zapisuje na razie surowy blob wire + proweniencję; pełne
+  mapowanie na listę parametrów wymaga złamania kodeka wire na próbkach kontrolnych
+  `mg101-patch-tools/samples/controlled` (31 eksperymentów single-param). To osobny
+  projekt RE. Plik→parametry jest już 100% (katalog bajt-identyczny z referencją).

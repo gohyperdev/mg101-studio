@@ -201,6 +201,21 @@ pub struct MidirLink {
     _input: midir::MidiInputConnection<()>,
 }
 
+/// Nazwy dostępnych portów wejściowych MIDI (do wykrywania urządzeń — W6).
+/// Pusty wektor, gdy backend MIDI niedostępny.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn input_port_names() -> Vec<String> {
+    use midir::MidiInput;
+    let Ok(input) = MidiInput::new("mg101-probe") else {
+        return Vec::new();
+    };
+    input
+        .ports()
+        .iter()
+        .filter_map(|p| input.port_name(p).ok())
+        .collect()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl MidirLink {
     /// Otwiera pierwszy port wejścia i wyjścia, którego nazwa zawiera `needle`.

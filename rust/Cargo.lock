@@ -3200,6 +3200,7 @@ dependencies = [
  "mg101-commands",
  "mg101-core",
  "mg101-device-link",
+ "mg101-device-pack-api",
  "mg101-library",
  "mg101-pack-nux-mg101",
  "mg101-studio",

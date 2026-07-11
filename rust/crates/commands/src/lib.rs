@@ -51,6 +51,10 @@ pub enum Command {
     GetDiff {
         patch_id: PatchId,
     },
+    /// Surowe bajty rekordu patcha (inspektor binarny) — read-only.
+    GetRaw {
+        patch_id: PatchId,
+    },
     // Write
     SetParameter {
         target: TargetRef,
@@ -127,6 +131,7 @@ impl Command {
             Command::ListModels { .. } => "list_models",
             Command::GetProfile => "get_profile",
             Command::GetDiff { .. } => "get_diff",
+            Command::GetRaw { .. } => "get_raw",
             Command::SetParameter { .. } => "set_parameter",
             Command::SetModel { .. } => "set_model",
             Command::SetBypass { .. } => "set_bypass",
@@ -155,6 +160,7 @@ impl Command {
             | Command::ListModels { .. }
             | Command::GetProfile
             | Command::GetDiff { .. }
+            | Command::GetRaw { .. }
             | Command::SelectPatch { .. } => Kind::Read,
             Command::SetParameter { .. }
             | Command::SetModel { .. }
@@ -296,6 +302,9 @@ impl Command {
             },
             "get_profile" => Command::GetProfile,
             "get_diff" => Command::GetDiff {
+                patch_id: string_arg(args, "patchID")?,
+            },
+            "get_raw" => Command::GetRaw {
                 patch_id: string_arg(args, "patchID")?,
             },
             "set_parameter" => Command::SetParameter {
