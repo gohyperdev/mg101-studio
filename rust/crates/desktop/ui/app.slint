@@ -24,6 +24,13 @@ export struct BlockRowUi {
     model-name: string,
     bypassed: bool,
     params: [ParamRowUi],
+    models: [string],   // nazwy modeli dostępnych w bloku (picker)
+    model-index: int,   // indeks aktywnego modelu w `models`
+}
+
+export struct ChatRowUi {
+    role: string,       // "user" | "assistant" | "tool"
+    text: string,
 }
 
 export struct DetailUi {
@@ -60,6 +67,17 @@ export component AppWindow inherits Window {
     in property <string> error-text;
     in property <int> lang-index;          // 0=EN 1=PL
 
+    // Agent (rozmowa + rozliczenie sesji)
+    in property <[ChatRowUi]> chat-rows;
+    in property <bool> agent-busy;
+    in property <string> usage-text;
+
+    // Ustawienia AI
+    in property <int> provider-index;      // 0=Anthropic 1=OpenAI-compatible
+    in property <string> cfg-endpoint;
+    in property <string> cfg-model;
+    in property <string> cfg-key;
+
     // --- Etykiety (i18n z Rust) ---
     in property <string> t-app-title;
     in property <string> t-tab-user;
@@ -79,9 +97,17 @@ export component AppWindow inherits Window {
     in property <string> t-delete;
     in property <string> t-revert;
     in property <string> t-import;
+    in property <string> t-export;
     in property <string> t-language;
     in property <string> t-empty-slot;
     in property <string> t-rev;
+    in property <string> t-settings;
+    in property <string> t-provider;
+    in property <string> t-endpoint;
+    in property <string> t-model;
+    in property <string> t-key;
+    in property <string> t-save;
+    in property <string> t-send;
 
     // --- Zdarzenia (obsługa w Rust) ---
     // Mutacje niosą `rev` (rewizja widziana przez użytkownika) — egzekwowany
@@ -95,9 +121,13 @@ export component AppWindow inherits Window {
     callback set-bypass(string, int, string, bool);    // id, rev, block, bypassed
     callback duplicate(string, int);                   // id, rev
     callback delete-patch(string, int);                // id, rev
+    callback switch-model(string, int, string, int);   // id, rev, block, model-index
     callback import();
+    callback export-patch(string, int);                // id, rev
     callback revert();
     callback dismiss-error();
+    callback send-message(string);                     // treść wiadomości do agenta
+    callback save-settings(int, string, string, string); // provider, endpoint, model, key
 
     HorizontalBox {
         padding: 0px;
@@ -205,6 +235,11 @@ export component AppWindow inherits Window {
                         clicked => { root.import(); }
                     }
                     Button {
+                        text: root.t-export;
+                        enabled: root.has-selection;
+                        clicked => { root.export-patch(root.current-id, root.detail.revision); }
+                    }
+                    Button {
                         text: root.t-duplicate;
                         enabled: root.has-selection;
                         clicked => { root.duplicate(root.current-id, root.detail.revision); }
@@ -293,9 +328,14 @@ export component AppWindow inherits Window {
                                 spacing: 4px;
                                 HorizontalBox {
                                     Text {
-                                        text: blk.block + "  ·  " + blk.model-name;
+                                        text: blk.block;
                                         color: white;
                                         vertical-alignment: center;
+                                    }
+                                    ComboBox {
+                                        model: blk.models;
+                                        current-index: blk.model-index;
+                                        selected(v) => { root.switch-model(root.detail.id, root.detail.revision, blk.block, self.current-index); }
                                     }
                                     Rectangle { horizontal-stretch: 1; }
                                     CheckBox {
@@ -363,11 +403,89 @@ export component AppWindow inherits Window {
                     }
                     Tab {
                         title: root.t-agent;
-                        Text { text: root.t-agent; color: #8a8a96; }
+                        VerticalBox {
+                            padding: 4px;
+                            spacing: 4px;
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalBox {
+                                    padding: 0px;
+                                    spacing: 6px;
+                                    for m[i] in root.chat-rows: Rectangle {
+                                        background: m.role == "user" ? #2a3550
+                                            : (m.role == "tool" ? #2a2a30 : #2f3a2f);
+                                        border-radius: 5px;
+                                        VerticalBox {
+                                            padding: 6px;
+                                            spacing: 2px;
+                                            Text {
+                                                text: m.role;
+                                                color: #8a8a96;
+                                                font-size: 10px;
+                                            }
+                                            Text {
+                                                text: m.text;
+                                                color: white;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: root.usage-text;
+                                color: #8a8a96;
+                                font-size: 11px;
+                            }
+                            HorizontalBox {
+                                spacing: 4px;
+                                agent-input := LineEdit {
+                                    placeholder-text: root.t-send + "…";
+                                    enabled: !root.agent-busy;
+                                    accepted(v) => {
+                                        if (v != "") { root.send-message(v); self.text = ""; }
+                                    }
+                                }
+                                Button {
+                                    text: root.t-send;
+                                    enabled: !root.agent-busy;
+                                    clicked => {
+                                        if (agent-input.text != "") {
+                                            root.send-message(agent-input.text);
+                                            agent-input.text = "";
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Tab {
                         title: root.t-mcp;
-                        Text { text: "stdio: mg101-mcp"; color: #8a8a96; }
+                        Text { text: "stdio: mg101-mcp"; color: #8a8a96; wrap: word-wrap; }
+                    }
+                    Tab {
+                        title: root.t-settings;
+                        VerticalBox {
+                            padding: 6px;
+                            spacing: 6px;
+                            Text { text: root.t-provider; color: #8a8a96; font-size: 11px; }
+                            provider-combo := ComboBox {
+                                model: ["Anthropic", "OpenAI-compatible"];
+                                current-index: root.provider-index;
+                            }
+                            Text { text: root.t-endpoint; color: #8a8a96; font-size: 11px; }
+                            endpoint-edit := LineEdit { text: root.cfg-endpoint; }
+                            Text { text: root.t-model; color: #8a8a96; font-size: 11px; }
+                            model-edit := LineEdit { text: root.cfg-model; }
+                            Text { text: root.t-key; color: #8a8a96; font-size: 11px; }
+                            key-edit := LineEdit { text: root.cfg-key; input-type: password; }
+                            Button {
+                                text: root.t-save;
+                                clicked => {
+                                    root.save-settings(provider-combo.current-index, endpoint-edit.text, model-edit.text, key-edit.text);
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -8,5 +8,11 @@
 pub mod i18n;
 pub mod vm;
 
+// Wątek agenta wymaga HTTP + wątków — tylko natywnie (nie wasm).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod agent;
+
 pub use i18n::{tr, Lang};
-pub use vm::{ByteChange, LibraryTab, PatchDetail, PatchRow, SlotRow, ViewModel};
+pub use vm::{
+    ByteChange, ChatRow, LibraryTab, ModelOption, PatchDetail, PatchRow, SlotRow, ViewModel,
+};

@@ -7,12 +7,23 @@
 //! okna. Powłoka Slint (`ui`/`main`) tylko renderuje te struktury i wywołuje
 //! metody.
 
+use mg101_agent_core::{
+    default_pricing, pricing_for, AgentConfig, ChatMessage, Provider, Role, Usage,
+};
 use mg101_commands::{Command, TargetRef};
 use mg101_library::{LibraryStore, PatchOrigin};
 use mg101_studio::{ExecError, Studio};
 use serde_json::Value;
 
 use crate::i18n::{tr, Lang};
+
+/// Wiersz rozmowy agenta do wyświetlenia (rola + tekst; wywołania narzędzi
+/// pokazywane jako skrót).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatRow {
+    pub role: String,
+    pub text: String,
+}
 
 /// Zakładka biblioteki/urządzenia (nowość v2 — HLD §5). `Library` to skład
 /// aplikacji; `User`/`Factory` to widoki banków urządzenia (puste bez połączenia).
@@ -81,6 +92,15 @@ pub struct ByteChange {
     pub after: i64,
 }
 
+/// Opcja modelu w pickerze bloku.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelOption {
+    pub id: i64,
+    pub name: String,
+    /// Domyślne wartości parametrów (minima) — używane przy przełączeniu modelu.
+    pub defaults: Vec<i64>,
+}
+
 /// ViewModel: posiada [`Studio`] i bieżący język; utrzymuje migawki banków
 /// urządzenia (wstrzykiwane z warstwy device-link po połączeniu).
 pub struct ViewModel<S: LibraryStore> {
@@ -90,6 +110,9 @@ pub struct ViewModel<S: LibraryStore> {
     user_bank: Vec<SlotRow>,
     factory_bank: Vec<SlotRow>,
     last_error: Option<String>,
+    agent_config: AgentConfig,
+    chat: Vec<ChatMessage>,
+    session_usage: Usage,
 }
 
 impl<S: LibraryStore> ViewModel<S> {
@@ -101,7 +124,93 @@ impl<S: LibraryStore> ViewModel<S> {
             user_bank: Vec::new(),
             factory_bank: Vec::new(),
             last_error: None,
+            agent_config: default_agent_config(),
+            chat: Vec::new(),
+            session_usage: Usage::default(),
         }
+    }
+
+    // --- Agent (konfiguracja, rozmowa, rozliczenie sesji) ---
+
+    pub fn agent_config(&self) -> &AgentConfig {
+        &self.agent_config
+    }
+
+    pub fn set_agent_config(&mut self, config: AgentConfig) {
+        self.agent_config = config.normalized();
+    }
+
+    /// Czy konfiguracja pozwala wywołać model (endpoint+model+klucz wg dostawcy).
+    pub fn is_agent_configured(&self) -> bool {
+        self.agent_config.is_configured()
+    }
+
+    /// Pełna historia rozmowy (kopia dla wątku agenta).
+    pub fn chat_history(&self) -> Vec<ChatMessage> {
+        self.chat.clone()
+    }
+
+    /// Dokłada wiadomość użytkownika do rozmowy.
+    pub fn push_user_message(&mut self, text: &str) {
+        self.chat.push(ChatMessage::user(text.to_owned()));
+    }
+
+    /// Zastępuje historię wynikiem przebiegu agenta i dolicza zużycie tokenów.
+    pub fn apply_run_outcome(&mut self, history: Vec<ChatMessage>, usage: Usage) {
+        self.chat = history;
+        self.session_usage.add(usage);
+    }
+
+    /// Wiersze rozmowy do wyświetlenia (rola + tekst; wywołania narzędzi jako skrót).
+    pub fn chat_rows(&self) -> Vec<ChatRow> {
+        let mut rows = Vec::new();
+        for m in &self.chat {
+            let role = match m.role {
+                Role::User if m.tool_results.is_empty() => "user",
+                Role::User => "tool",
+                Role::Assistant => "assistant",
+            };
+            if role == "tool" {
+                // Wyniki narzędzi — zwięzły ślad, nie zalewać rozmowy.
+                rows.push(ChatRow {
+                    role: "tool".into(),
+                    text: format!("[{} wynik(ów) narzędzi]", m.tool_results.len()),
+                });
+                continue;
+            }
+            let mut text = m.content.clone();
+            for tc in &m.tool_calls {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&format!("→ narzędzie: {}", tc.name));
+            }
+            if !text.is_empty() {
+                rows.push(ChatRow {
+                    role: role.into(),
+                    text,
+                });
+            }
+        }
+        rows
+    }
+
+    pub fn session_usage(&self) -> Usage {
+        self.session_usage
+    }
+
+    /// Koszt sesji w USD wg cennika modelu (0 dla nieznanego modelu).
+    pub fn session_cost_usd(&self) -> f64 {
+        let table = default_pricing();
+        pricing_for(&self.agent_config.model, &table)
+            .map(|p| p.cost_usd(self.session_usage))
+            .unwrap_or(0.0)
+    }
+
+    /// Wykonuje komendę narzędzia agenta na składzie (dla egzekutora kanałowego
+    /// na wątku UI). Zwraca JSON lub komunikat błędu (kształt dla modelu).
+    pub fn execute_tool(&mut self, command: &Command) -> Result<Value, String> {
+        self.studio.execute(command).map_err(|e| e.to_string())
     }
 
     pub fn lang(&self) -> Lang {
@@ -127,6 +236,11 @@ impl<S: LibraryStore> ViewModel<S> {
 
     pub fn clear_error(&mut self) {
         self.last_error = None;
+    }
+
+    /// Ustawia zlokalizowany komunikat błędu z zewnątrz (np. błąd wątku agenta).
+    pub fn report_error(&mut self, detail: String) {
+        self.last_error = Some(format!("{}: {detail}", tr(self.lang, "error.title")));
     }
 
     /// Wstrzykuje migawkę banków urządzenia (po połączeniu/dump — E2/E5).
@@ -217,6 +331,65 @@ impl<S: LibraryStore> ViewModel<S> {
     pub fn selected_detail(&mut self) -> Option<PatchDetail> {
         let id = self.selected_id()?;
         self.detail(&id)
+    }
+
+    /// Modele dostępne dla bloku (picker) wraz z domyślnymi wartościami params.
+    pub fn models(&mut self, block: &str) -> Vec<ModelOption> {
+        let v = match self.exec(&Command::ListModels {
+            block: block.to_owned(),
+        }) {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+        v.as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|m| ModelOption {
+                        id: m.get("modelID").and_then(Value::as_i64).unwrap_or(0),
+                        name: m
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        defaults: m
+                            .get("parameters")
+                            .and_then(Value::as_array)
+                            .map(|ps| {
+                                ps.iter()
+                                    .map(|p| p.get("minimum").and_then(Value::as_i64).unwrap_or(0))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Przełącza aktywny model bloku na `model_id`, ustawiając jego parametry na
+    /// wartości domyślne (minima). Parytet pickera modelu z v1 `BlockEditorView`.
+    pub fn switch_model(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        block: &str,
+        model_id: i64,
+    ) -> bool {
+        let Some(opt) = self.models(block).into_iter().find(|m| m.id == model_id) else {
+            self.last_error = Some(format!(
+                "{}: nieznany model {block}.{model_id}",
+                tr(self.lang, "error.title")
+            ));
+            return false;
+        };
+        self.set_model(
+            patch_id,
+            expected_revision,
+            block,
+            model_id,
+            opt.defaults,
+            false,
+        )
     }
 
     /// Różnice bajtowe patcha względem oryginału (inspektor Changes).
@@ -350,6 +523,21 @@ impl<S: LibraryStore> ViewModel<S> {
         self.exec(&Command::RevertLastAgentAction).is_some()
     }
 
+    /// Eksportuje patch do pliku `.mg101patch` pod wskazaną ścieżką (offline —
+    /// nie wymaga urządzenia). Zwraca true przy powodzeniu.
+    pub fn export(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        destination_path: &str,
+    ) -> bool {
+        self.exec(&Command::ExportPatch {
+            target: Self::library_target(patch_id, expected_revision),
+            destination_path: destination_path.to_owned(),
+        })
+        .is_some()
+    }
+
     /// Importuje plik `.mg101patch` (pojedynczy lub zestaw 36) do biblioteki.
     /// Zwraca liczbę zaimportowanych patchy (0 przy błędzie).
     pub fn import(&mut self, path: &str) -> usize {
@@ -369,6 +557,18 @@ impl<S: LibraryStore> ViewModel<S> {
         // Prefiks zlokalizowany + treść techniczna (spójne z alertem v1).
         format!("{}: {e}", tr(self.lang, "error.title"))
     }
+}
+
+/// Domyślna konfiguracja agenta — Anthropic, endpoint publiczny, model bieżący;
+/// klucz pusty (użytkownik uzupełnia w ustawieniach).
+fn default_agent_config() -> AgentConfig {
+    AgentConfig {
+        provider: Provider::Anthropic,
+        endpoint: "https://api.anthropic.com".into(),
+        model: "claude-sonnet-5".into(),
+        api_key: String::new(),
+    }
+    .normalized()
 }
 
 fn origin_str(origin: PatchOrigin) -> &'static str {
@@ -711,6 +911,61 @@ mod tests {
     }
 
     #[test]
+    fn models_lists_block_models_and_switch_changes_active() {
+        let mut vm = vm();
+        // Znajdź blok, który ma >1 model i model z parametrami.
+        let (profile, catalog) = mg101_pack_nux_mg101::load().unwrap();
+        let block = profile
+            .blocks
+            .iter()
+            .find(|b| catalog.models(&b.id).len() > 1)
+            .map(|b| b.id.clone())
+            .expect("blok z >1 modelem");
+        let opts = vm.models(&block);
+        assert!(opts.len() > 1, "picker ma listę modeli");
+
+        let rev = vm.detail("p1").unwrap().revision;
+        let cur = vm
+            .detail("p1")
+            .unwrap()
+            .blocks
+            .iter()
+            .find(|b| b.block == block)
+            .unwrap()
+            .model_id;
+        let target = opts.iter().find(|o| o.id != cur).unwrap().id;
+        assert!(vm.switch_model("p1", rev, &block, target));
+        let after = vm
+            .detail("p1")
+            .unwrap()
+            .blocks
+            .iter()
+            .find(|b| b.block == block)
+            .unwrap()
+            .model_id;
+        assert_eq!(after, target, "model bloku przełączony");
+    }
+
+    #[test]
+    fn export_writes_patch_file() {
+        let mut vm = vm();
+        let (profile, _) = mg101_pack_nux_mg101::load().unwrap();
+        let dir = std::env::temp_dir().join(format!("mg101_vm_export_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let dest = dir.join("out.mg101patch");
+        let _ = std::fs::remove_file(&dest);
+        let rev = vm.detail("p1").unwrap().revision;
+        assert!(vm.export("p1", rev, dest.to_str().unwrap()));
+        let written = std::fs::read(&dest).unwrap();
+        assert_eq!(
+            written.len(),
+            profile.record_size,
+            "eksport = rozmiar rekordu"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn import_adds_patches_from_file() {
         let mut vm = vm();
         let (profile, _) = mg101_pack_nux_mg101::load().unwrap();
@@ -723,6 +978,56 @@ mod tests {
         assert_eq!(n, 2);
         assert_eq!(vm.library_rows().len(), 4); // 2 startowe + 2 zaimportowane
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_config_defaults_and_updates() {
+        let mut vm = vm();
+        assert_eq!(vm.agent_config().provider, Provider::Anthropic);
+        assert!(!vm.is_agent_configured(), "brak klucza → nieskonfigurowany");
+        let mut cfg = vm.agent_config().clone();
+        cfg.api_key = "sk-test".into();
+        vm.set_agent_config(cfg);
+        assert!(vm.is_agent_configured(), "z kluczem → skonfigurowany");
+    }
+
+    #[test]
+    fn chat_rows_and_usage_accounting() {
+        use mg101_agent_core::{ChatMessage, Usage};
+        let mut vm = vm();
+        vm.push_user_message("ustaw bpm na 120");
+        // Symuluj wynik przebiegu: user + asystent, zużycie tokenów.
+        let history = vec![
+            ChatMessage::user("ustaw bpm na 120"),
+            ChatMessage::assistant("Zrobione."),
+        ];
+        vm.apply_run_outcome(
+            history,
+            Usage {
+                input_tokens: 1000,
+                output_tokens: 500,
+            },
+        );
+        let rows = vm.chat_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].role, "user");
+        assert_eq!(rows[1].role, "assistant");
+        assert_eq!(vm.session_usage().input_tokens, 1000);
+        // Koszt: model domyślny (sonnet) ma cennik → koszt > 0.
+        assert!(vm.session_cost_usd() > 0.0, "koszt sesji z cennika");
+    }
+
+    #[test]
+    fn execute_tool_routes_to_studio() {
+        let mut vm = vm();
+        // Narzędzie odczytu przez ścieżkę agenta (execute_tool) zwraca JSON.
+        let v = vm.execute_tool(&Command::ListPatches).unwrap();
+        assert!(v.as_array().is_some());
+        // Błąd narzędzia → String (kształt dla modelu).
+        let err = vm.execute_tool(&Command::GetPatch {
+            patch_id: "nope".into(),
+        });
+        assert!(err.is_err());
     }
 
     #[test]

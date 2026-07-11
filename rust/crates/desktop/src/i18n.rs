@@ -59,6 +59,7 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("inspector.binary", "Binarne", "Binary"),
         ("inspector.agent", "Agent", "Agent"),
         ("inspector.mcp", "MCP", "MCP"),
+        ("inspector.settings", "Ustawienia", "Settings"),
         (
             "inspector.no_changes",
             "Brak zmian względem oryginału",
@@ -69,6 +70,9 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("settings.endpoint", "Endpoint", "Endpoint"),
         ("settings.model", "Model", "Model"),
         ("settings.language", "Język", "Language"),
+        ("settings.key", "Klucz API", "API Key"),
+        ("action.save", "Zapisz", "Save"),
+        ("agent.send", "Wyślij", "Send"),
         ("action.duplicate", "Duplikuj", "Duplicate"),
         ("action.delete", "Usuń", "Delete"),
         ("action.revert", "Cofnij", "Revert"),
