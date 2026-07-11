@@ -355,6 +355,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mg101-studio"
+version = "0.1.0"
+dependencies = [
+ "mg101-commands",
+ "mg101-core",
+ "mg101-library",
+ "mg101-pack-nux-mg101",
+ "serde_json",
+]
+
+[[package]]
 name = "mg101-transfer-engine"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,22 @@
+[package]
+name = "mg101-studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Warstwa aplikacyjna: wykonawca komend (port StudioState + GUIToolExecutor).
+# Spina rejestr komend (E3) z edycją kanoniczną (core) i składem biblioteki (E4).
+# Device-agnostyczny: profil + katalog jako DANE (żadnej wiedzy o MG-101 w kodzie).
+[dependencies]
+mg101-core = { path = "../core" }
+mg101-commands = { path = "../commands" }
+mg101-library = { path = "../library" }
+serde_json = "1"
+
+[dev-dependencies]
+# Realny profil/katalog MG-101 do testów (bez wpływu na device-agnostyczność).
+mg101-pack-nux-mg101 = { path = "../pack-nux-mg101" }
+
+[lib]
+name = "mg101_studio"
+path = "src/lib.rs"

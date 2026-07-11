@@ -11,6 +11,7 @@ members = [
     "crates/commands",
     "crates/library",
     "crates/transfer-engine",
+    "crates/studio",
     "crates/agent-core",
     "crates/mcp",
     "crates/desktop",
