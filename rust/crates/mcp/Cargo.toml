@@ -4,11 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Serwer MCP (rmcp): stdio + Streamable HTTP na localhost; komendy z rejestru z anotacjami. E6.
+# Serwer MCP (rmcp) po stdio: narzędzia wariantu File z rejestru komend (E3),
+# executor plikowy (studio::file_ops) — port Sources/MG101MCP. E6.3.
 [dependencies]
 mg101-core = { path = "../core" }
-mg101-agent-core = { path = "../agent-core" }
+mg101-commands = { path = "../commands" }
+mg101-studio = { path = "../studio" }
+mg101-pack-nux-mg101 = { path = "../pack-nux-mg101" }
+serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rmcp = { version = "0.9", features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
 
 [lib]
 name = "mg101_mcp"
 path = "src/lib.rs"
+
+[[bin]]
+name = "mg101-mcp"
+path = "src/main.rs"

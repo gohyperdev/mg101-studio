@@ -12,6 +12,9 @@
 //! (mutate/duplicate/delete prepared→committed), revert_last/revert_session przez
 //! inwersy, oraz filesystem set_ir/list_files/import/export (E6.2b, natywne).
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod file_ops;
+
 use mg101_commands::{Command, TargetRef};
 use mg101_core::wal::{
     last_committed, sha256_hex, EntryState, InverseOperation, JournalStore, StagedMetadata,
