@@ -53,6 +53,8 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("editor.model", "Model", "Model"),
         ("editor.name", "Nazwa", "Name"),
         ("editor.bpm", "Tempo (BPM)", "Tempo (BPM)"),
+        ("editor.rev", "rew.", "rev"),
+        ("slot.empty", "(pusty)", "(empty)"),
         ("inspector.changes", "Zmiany", "Changes"),
         ("inspector.binary", "Binarne", "Binary"),
         ("inspector.agent", "Agent", "Agent"),

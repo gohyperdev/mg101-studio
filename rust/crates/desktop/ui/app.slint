@@ -78,18 +78,24 @@ export component AppWindow inherits Window {
     in property <string> t-duplicate;
     in property <string> t-delete;
     in property <string> t-revert;
+    in property <string> t-import;
     in property <string> t-language;
+    in property <string> t-empty-slot;
+    in property <string> t-rev;
 
     // --- Zdarzenia (obsługa w Rust) ---
+    // Mutacje niosą `rev` (rewizja widziana przez użytkownika) — egzekwowany
+    // optimistic concurrency (review E7/K1), nie doczytywany tuż przed zapisem.
     callback switch-tab(int);
     callback switch-lang(int);
     callback select(string);
-    callback set-name(string, string);          // id, text
-    callback set-bpm(string, string);           // id, text
-    callback set-param(string, string, string, float); // id, block, param, value
-    callback set-bypass(string, string, bool);  // id, block, bypassed
-    callback duplicate(string);
-    callback delete-patch(string);
+    callback set-name(string, int, string);            // id, rev, text
+    callback set-bpm(string, int, string);             // id, rev, text
+    callback set-param(string, int, string, string, float); // id, rev, block, param, value
+    callback set-bypass(string, int, string, bool);    // id, rev, block, bypassed
+    callback duplicate(string, int);                   // id, rev
+    callback delete-patch(string, int);                // id, rev
+    callback import();
     callback revert();
     callback dismiss-error();
 
@@ -178,7 +184,7 @@ export component AppWindow inherits Window {
                                 vertical-alignment: center;
                             }
                             Text {
-                                text: s.occupied ? s.name : "(pusty)";
+                                text: s.occupied ? s.name : root.t-empty-slot;
                                 color: s.occupied ? white : #6a6a76;
                                 vertical-alignment: center;
                             }
@@ -195,14 +201,18 @@ export component AppWindow inherits Window {
                 HorizontalBox {
                     spacing: 4px;
                     Button {
+                        text: root.t-import;
+                        clicked => { root.import(); }
+                    }
+                    Button {
                         text: root.t-duplicate;
                         enabled: root.has-selection;
-                        clicked => { root.duplicate(root.current-id); }
+                        clicked => { root.duplicate(root.current-id, root.detail.revision); }
                     }
                     Button {
                         text: root.t-delete;
                         enabled: root.has-selection;
-                        clicked => { root.delete-patch(root.current-id); }
+                        clicked => { root.delete-patch(root.current-id, root.detail.revision); }
                     }
                     Button {
                         text: root.t-revert;
@@ -245,7 +255,7 @@ export component AppWindow inherits Window {
                         Text { text: root.t-name; color: #8a8a96; font-size: 11px; }
                         LineEdit {
                             text: root.detail.name;
-                            accepted(v) => { root.set-name(root.detail.id, v); }
+                            accepted(v) => { root.set-name(root.detail.id, root.detail.revision, v); }
                         }
                     }
                     VerticalBox {
@@ -255,12 +265,12 @@ export component AppWindow inherits Window {
                         LineEdit {
                             text: root.detail.bpm;
                             input-type: number;
-                            accepted(v) => { root.set-bpm(root.detail.id, v); }
+                            accepted(v) => { root.set-bpm(root.detail.id, root.detail.revision, v); }
                         }
                     }
                     VerticalBox {
                         padding: 0px;
-                        Text { text: "rev"; color: #8a8a96; font-size: 11px; }
+                        Text { text: root.t-rev; color: #8a8a96; font-size: 11px; }
                         Text { text: root.detail.revision; color: white; }
                     }
                 }
@@ -291,7 +301,7 @@ export component AppWindow inherits Window {
                                     CheckBox {
                                         text: root.t-bypass;
                                         checked: blk.bypassed;
-                                        toggled => { root.set-bypass(root.detail.id, blk.block, self.checked); }
+                                        toggled => { root.set-bypass(root.detail.id, root.detail.revision, blk.block, self.checked); }
                                     }
                                 }
                                 for p[pi] in blk.params: HorizontalBox {
@@ -310,11 +320,11 @@ export component AppWindow inherits Window {
                                     }
                                     Button {
                                         text: "−";
-                                        clicked => { root.set-param(root.detail.id, blk.block, p.name, p.value - 1); }
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1); }
                                     }
                                     Button {
                                         text: "+";
-                                        clicked => { root.set-param(root.detail.id, blk.block, p.name, p.value + 1); }
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1); }
                                     }
                                     Text {
                                         text: p.minimum + "…" + p.maximum;
@@ -349,7 +359,7 @@ export component AppWindow inherits Window {
                     }
                     Tab {
                         title: root.t-binary;
-                        Text { text: "hex: " + root.detail.id; color: #8a8a96; }
+                        Text { text: root.t-binary + ": " + root.detail.id; color: #8a8a96; }
                     }
                     Tab {
                         title: root.t-agent;

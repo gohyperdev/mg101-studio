@@ -219,13 +219,6 @@ impl<S: LibraryStore> ViewModel<S> {
         self.detail(&id)
     }
 
-    fn current_revision(&mut self, patch_id: &str) -> Option<i64> {
-        let v = self.exec(&Command::GetPatch {
-            patch_id: patch_id.to_owned(),
-        })?;
-        v.get("revision").and_then(Value::as_i64)
-    }
-
     /// Różnice bajtowe patcha względem oryginału (inspektor Changes).
     pub fn changes(&mut self, patch_id: &str) -> Vec<ByteChange> {
         let v = match self.exec(&Command::GetDiff {
@@ -248,28 +241,31 @@ impl<S: LibraryStore> ViewModel<S> {
     }
 
     // --- Mutacje (przez magistralę komend, cel biblioteczny z rewizją) ---
+    //
+    // KRYTYCZNE (review E7/K1): `expected_revision` musi pochodzić z rewizji,
+    // którą WIDZIAŁ użytkownik (z `detail`/wiersza), a NIE być doczytywany tuż
+    // przed zapisem — inaczej optimistic concurrency jest fikcją (TOCTOU: przy
+    // współdzielonym składzie UI po cichu nadpisałoby cudzą zmianę). Dlatego
+    // każda mutacja przyjmuje jawnie `expected_revision`.
 
-    fn library_target(&mut self, patch_id: &str) -> Option<TargetRef> {
-        let revision = self.current_revision(patch_id)?;
-        Some(TargetRef::Library {
+    fn library_target(patch_id: &str, expected_revision: i64) -> TargetRef {
+        TargetRef::Library {
             patch_id: patch_id.to_owned(),
-            expected_revision: revision,
-        })
+            expected_revision,
+        }
     }
 
     /// Zmienia parametr aktywnego modelu bloku.
     pub fn set_parameter(
         &mut self,
         patch_id: &str,
+        expected_revision: i64,
         block: &str,
         parameter: &str,
         value: i64,
     ) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
         self.exec(&Command::SetParameter {
-            target,
+            target: Self::library_target(patch_id, expected_revision),
             block: block.to_owned(),
             parameter: parameter.to_owned(),
             value,
@@ -281,16 +277,14 @@ impl<S: LibraryStore> ViewModel<S> {
     pub fn set_model(
         &mut self,
         patch_id: &str,
+        expected_revision: i64,
         block: &str,
         model: i64,
         values: Vec<i64>,
         bypassed: bool,
     ) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
         self.exec(&Command::SetModel {
-            target,
+            target: Self::library_target(patch_id, expected_revision),
             block: block.to_owned(),
             model,
             values,
@@ -300,12 +294,15 @@ impl<S: LibraryStore> ViewModel<S> {
     }
 
     /// Włącza/wyłącza bypass bloku.
-    pub fn set_bypass(&mut self, patch_id: &str, block: &str, bypassed: bool) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
+    pub fn set_bypass(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        block: &str,
+        bypassed: bool,
+    ) -> bool {
         self.exec(&Command::SetBypass {
-            target,
+            target: Self::library_target(patch_id, expected_revision),
             block: block.to_owned(),
             bypassed,
         })
@@ -313,45 +310,59 @@ impl<S: LibraryStore> ViewModel<S> {
     }
 
     /// Zmienia nazwę patcha.
-    pub fn rename(&mut self, patch_id: &str, name: &str) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
+    pub fn rename(&mut self, patch_id: &str, expected_revision: i64, name: &str) -> bool {
         self.exec(&Command::SetName {
-            target,
+            target: Self::library_target(patch_id, expected_revision),
             name: name.to_owned(),
         })
         .is_some()
     }
 
     /// Zmienia BPM patcha.
-    pub fn set_bpm(&mut self, patch_id: &str, bpm: i64) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
-        self.exec(&Command::SetBpm { target, bpm }).is_some()
+    pub fn set_bpm(&mut self, patch_id: &str, expected_revision: i64, bpm: i64) -> bool {
+        self.exec(&Command::SetBpm {
+            target: Self::library_target(patch_id, expected_revision),
+            bpm,
+        })
+        .is_some()
     }
 
     /// Duplikuje patch; zwraca ID nowej kopii.
-    pub fn duplicate(&mut self, patch_id: &str) -> Option<String> {
-        let target = self.library_target(patch_id)?;
-        let v = self.exec(&Command::DuplicatePatch { target })?;
+    pub fn duplicate(&mut self, patch_id: &str, expected_revision: i64) -> Option<String> {
+        let v = self.exec(&Command::DuplicatePatch {
+            target: Self::library_target(patch_id, expected_revision),
+        })?;
         v.get("newPatchID")
             .and_then(Value::as_str)
             .map(str::to_owned)
     }
 
     /// Usuwa (miękko) patch do poczekalni sesji.
-    pub fn delete(&mut self, patch_id: &str) -> bool {
-        let Some(target) = self.library_target(patch_id) else {
-            return false;
-        };
-        self.exec(&Command::DeletePatch { target }).is_some()
+    pub fn delete(&mut self, patch_id: &str, expected_revision: i64) -> bool {
+        self.exec(&Command::DeletePatch {
+            target: Self::library_target(patch_id, expected_revision),
+        })
+        .is_some()
     }
 
     /// Cofa ostatnią operację agenta/UI w sesji (wymaga dziennika WAL).
     pub fn revert_last(&mut self) -> bool {
         self.exec(&Command::RevertLastAgentAction).is_some()
+    }
+
+    /// Importuje plik `.mg101patch` (pojedynczy lub zestaw 36) do biblioteki.
+    /// Zwraca liczbę zaimportowanych patchy (0 przy błędzie).
+    pub fn import(&mut self, path: &str) -> usize {
+        match self.exec(&Command::ImportPatch {
+            path: path.to_owned(),
+        }) {
+            Some(v) => v
+                .get("importedPatchIDs")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0),
+            None => 0,
+        }
     }
 
     fn localize_error(&self, e: &ExecError) -> String {
@@ -589,7 +600,7 @@ mod tests {
     fn edit_bpm_routes_through_command_bus_and_bumps_revision() {
         let mut vm = vm();
         let before = vm.detail("p1").unwrap().revision;
-        assert!(vm.set_bpm("p1", 123));
+        assert!(vm.set_bpm("p1", before, 123));
         let d = vm.detail("p1").unwrap();
         assert_eq!(d.bpm, 123);
         assert_eq!(
@@ -600,43 +611,80 @@ mod tests {
     }
 
     #[test]
-    fn edit_parameter_and_bypass_persist() {
+    fn stale_revision_is_rejected_as_conflict() {
+        // K1: edycja z rewizją, której użytkownik już nie widzi (bo ktoś zmienił
+        // patch w międzyczasie), MUSI się nie powieść — nie po cichu nadpisać.
+        let mut vm = vm();
+        let rev = vm.detail("p1").unwrap().revision;
+        assert!(vm.set_bpm("p1", rev, 100)); // pierwszy zapis podbija rewizję
+        vm.clear_error();
+        // Drugi zapis ze STARĄ rewizją (rev, nie rev+1) → konflikt.
+        assert!(
+            !vm.set_bpm("p1", rev, 200),
+            "stara rewizja nie powinna przejść"
+        );
+        assert!(vm.last_error().is_some(), "konflikt zgłoszony");
+        assert_eq!(vm.detail("p1").unwrap().bpm, 100, "wartość nietknięta");
+    }
+
+    #[test]
+    fn edit_bypass_persists() {
         let mut vm = vm();
         let d = vm.detail("p1").unwrap();
-        let blk = &d.blocks[0];
-        assert!(vm.set_bypass("p1", &blk.block, true));
+        let block = d.blocks[0].block.clone();
+        assert!(vm.set_bypass("p1", d.revision, &block, true));
         assert!(vm.detail("p1").unwrap().blocks[0].bypassed);
+    }
 
-        if let Some(param) = d
+    #[test]
+    fn edit_parameter_persists_after_selecting_model_with_params() {
+        // Zerowy blob → model 0 bywa bez parametrów; najpierw ustaw model, który
+        // parametry ma, potem edytuj jego parametr (realny test set_parameter).
+        let (profile, catalog) = mg101_pack_nux_mg101::load().unwrap();
+        let (block_id, model) = profile
             .blocks
             .iter()
-            .flat_map(|b| {
-                b.parameters
-                    .iter()
-                    .map(move |p| (b.block.clone(), p.clone()))
+            .find_map(|b| {
+                catalog
+                    .models(&b.id)
+                    .into_iter()
+                    .find(|m| !m.parameters.is_empty())
+                    .map(|m| (b.id.clone(), m.clone()))
             })
-            .next()
-        {
-            let (block, p) = param;
-            let target = (p.minimum + p.maximum) / 2;
-            assert!(vm.set_parameter("p1", &block, &p.name, target));
-        }
+            .expect("katalog MG-101 ma model z parametrami");
+
+        let mut vm = vm();
+        let rev = vm.detail("p1").unwrap().revision;
+        let values: Vec<i64> = model.parameters.iter().map(|p| p.minimum()).collect();
+        assert!(vm.set_model("p1", rev, &block_id, model.model_id, values, false));
+
+        let d = vm.detail("p1").unwrap();
+        let blk = d.blocks.iter().find(|b| b.block == block_id).unwrap();
+        let p = &blk.parameters[0];
+        let target = (p.minimum + p.maximum) / 2;
+        assert!(vm.set_parameter("p1", d.revision, &block_id, &p.name, target));
+        let after = vm.detail("p1").unwrap();
+        let blk2 = after.blocks.iter().find(|b| b.block == block_id).unwrap();
+        assert_eq!(blk2.parameters[0].value, target, "parametr zapisany");
     }
 
     #[test]
     fn duplicate_creates_new_patch_and_delete_removes() {
         let mut vm = vm();
-        let new_id = vm.duplicate("p1").unwrap();
+        let rev = vm.detail("p1").unwrap().revision;
+        let new_id = vm.duplicate("p1", rev).unwrap();
         assert_ne!(new_id, "p1");
         assert_eq!(vm.library_rows().len(), 3);
-        assert!(vm.delete(&new_id));
+        let new_rev = vm.detail(&new_id).unwrap().revision;
+        assert!(vm.delete(&new_id, new_rev));
         assert_eq!(vm.library_rows().len(), 2);
     }
 
     #[test]
     fn changes_reports_byte_diffs_after_edit() {
         let mut vm = vm();
-        assert!(vm.set_bpm("p1", 140));
+        let rev = vm.detail("p1").unwrap().revision;
+        assert!(vm.set_bpm("p1", rev, 140));
         let changes = vm.changes("p1");
         assert!(
             !changes.is_empty(),
@@ -663,9 +711,25 @@ mod tests {
     }
 
     #[test]
+    fn import_adds_patches_from_file() {
+        let mut vm = vm();
+        let (profile, _) = mg101_pack_nux_mg101::load().unwrap();
+        let dir = std::env::temp_dir().join(format!("mg101_vm_import_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("two.mg101patch");
+        // Dwa rekordy (wielokrotność record_size) → dwa patche.
+        std::fs::write(&path, vec![0u8; profile.record_size * 2]).unwrap();
+        let n = vm.import(path.to_str().unwrap());
+        assert_eq!(n, 2);
+        assert_eq!(vm.library_rows().len(), 4); // 2 startowe + 2 zaimportowane
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn revert_last_undoes_edit() {
         let mut vm = vm();
-        assert!(vm.set_bpm("p1", 200));
+        let rev = vm.detail("p1").unwrap().revision;
+        assert!(vm.set_bpm("p1", rev, 200));
         assert_eq!(vm.detail("p1").unwrap().bpm, 200);
         assert!(vm.revert_last());
         assert_ne!(

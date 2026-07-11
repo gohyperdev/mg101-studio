@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use mg101_core::wal::{JournalStore, TransactionEntry, WalError};
 use mg101_desktop::vm::LibraryTab;
 use mg101_desktop::{Lang, ViewModel};
 use mg101_library::MemoryStore;
@@ -15,6 +16,28 @@ use slint::{ModelRc, SharedString, VecModel};
 slint::include_modules!();
 
 type Vm = ViewModel<MemoryStore>;
+
+/// Dziennik WAL sesji w pamięci — daje działający revert (review E7/K2). Stan
+/// crash-recovery jest efemeryczny (jak ustalono w BACKLOG E3), więc pamięciowy
+/// dziennik na czas życia procesu jest wystarczający dla undo w UI.
+#[derive(Default)]
+struct SessionJournal {
+    entries: RefCell<Vec<TransactionEntry>>,
+}
+
+impl JournalStore for SessionJournal {
+    fn append(&self, entry: &TransactionEntry) -> Result<(), WalError> {
+        self.entries.borrow_mut().push(entry.clone());
+        Ok(())
+    }
+    fn load(&self) -> Result<Vec<TransactionEntry>, WalError> {
+        Ok(self.entries.borrow().clone())
+    }
+    fn rewrite(&self, entries: &[TransactionEntry]) -> Result<(), WalError> {
+        *self.entries.borrow_mut() = entries.to_vec();
+        Ok(())
+    }
+}
 
 fn tab_index(tab: LibraryTab) -> i32 {
     match tab {
@@ -96,7 +119,10 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_duplicate(l("action.duplicate"));
     ui.set_t_delete(l("action.delete"));
     ui.set_t_revert(l("action.revert"));
+    ui.set_t_import(l("action.import"));
     ui.set_t_language(l("settings.language"));
+    ui.set_t_empty_slot(l("slot.empty"));
+    ui.set_t_rev(l("editor.rev"));
     ui.set_lang_index(if vm.lang() == Lang::Pl { 1 } else { 0 });
 }
 
@@ -169,7 +195,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (profile, catalog) = mg101_pack_nux_mg101::load()?;
     let profile = Box::leak(Box::new(profile));
     let catalog = Box::leak(Box::new(catalog));
-    let studio = Studio::new(MemoryStore::new(), profile, catalog, 0);
+    let studio = Studio::new(MemoryStore::new(), profile, catalog, 0)
+        .with_journal(Box::new(SessionJournal::default()));
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
 
     let ui = AppWindow::new()?;
@@ -196,11 +223,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wire!(on_select, |vm, id| {
         vm.select(&id);
     });
-    wire!(on_duplicate, |vm, id| {
-        vm.duplicate(&id);
+    wire!(on_duplicate, |vm, id, rev| {
+        vm.duplicate(&id, rev as i64);
     });
-    wire!(on_delete_patch, |vm, id| {
-        vm.delete(&id);
+    wire!(on_delete_patch, |vm, id, rev| {
+        vm.delete(&id, rev as i64);
     });
     wire!(on_revert, |vm| {
         vm.revert_last();
@@ -208,19 +235,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wire!(on_dismiss_error, |vm| {
         vm.clear_error();
     });
-    wire!(on_set_name, |vm, id, text| {
-        vm.rename(&id, &text);
-    });
-    wire!(on_set_bpm, |vm, id, text| {
-        if let Ok(bpm) = text.trim().parse::<i64>() {
-            vm.set_bpm(&id, bpm);
+    wire!(on_import, |vm| {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("MG-101 patch", &["mg101patch"])
+            .pick_file()
+        {
+            vm.import(&path.to_string_lossy());
         }
     });
-    wire!(on_set_bypass, |vm, id, block, on| {
-        vm.set_bypass(&id, &block, on);
+    wire!(on_set_name, |vm, id, rev, text| {
+        vm.rename(&id, rev as i64, &text);
     });
-    wire!(on_set_param, |vm, id, block, param, value| {
-        vm.set_parameter(&id, &block, &param, value.round() as i64);
+    wire!(on_set_bpm, |vm, id, rev, text| {
+        if let Ok(bpm) = text.trim().parse::<i64>() {
+            vm.set_bpm(&id, rev as i64, bpm);
+        }
+    });
+    wire!(on_set_bypass, |vm, id, rev, block, on| {
+        vm.set_bypass(&id, rev as i64, &block, on);
+    });
+    wire!(on_set_param, |vm, id, rev, block, param, value| {
+        vm.set_parameter(&id, rev as i64, &block, &param, value.round() as i64);
     });
 
     // Zmiana języka: przelicz etykiety + odśwież.

@@ -153,6 +153,26 @@
 - N8: testy — brak dla `set_ir`/`clear_ir` na ścieżce plikowej (WAV); `mcp`
   `tmpdir()` bez tagu per test (dziś jeden konsument, mina na przyszłość).
 
+## Z review E7 (UI desktop — naprawione lub zaplanowane)
+- [x] K1: optimistic concurrency naprawiony — mutacje VM przyjmują jawnie
+  `expected_revision` (rewizja WIDZIANA przez użytkownika), zamiast doczytywać ją
+  tuż przed zapisem (TOCTOU maskujący konflikt). Callbacki Slint niosą
+  `detail.revision`. +test `stale_revision_is_rejected_as_conflict`.
+- [x] K2: revert działa — Studio w binarce dostaje `SessionJournal` (WAL w pamięci
+  na czas sesji); było: `Studio::new` bez dziennika → revert zawsze błąd.
+- [x] K3: biblioteka zasilana — wpięty Import (`rfd` natywne okno → ImportPatch);
+  było: pusty `MemoryStore` bez ścieżki zasilenia. +test `import_adds_patches`.
+- [x] i18n: `slot.empty`/`editor.rev` zamiast twardych literałów w app.slint;
+  `t-binary` zamiast „hex:".
+- N (niekryt.): brak persystencji wyboru języka (zawsze EN po restarcie) —
+  zapisać `Lang::code()` w ustawieniach. `MemoryStore` ulotny → rozważyć
+  `SqliteStore` z pliku (persystencja biblioteki). Parytet UX (świadomie
+  etapowe): zmiana modelu bloku w UI (VM ma set_model), Export/Transfer push/pull,
+  panel ustawień AI, agent-chat + widok sesji (zakładki Agent/MCP/Binary to
+  placeholdery; rdzeń agent-core/mcp gotowy). Inspektor Changes względem zera, nie
+  oryginału (wspólne z E6/W3 baseline). `tr` → echo klucza zamiast „??". Emoji w
+  UI (🔒/✕) — ryzyko tofu na Windows/FemtoVG.
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.
