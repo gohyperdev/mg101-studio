@@ -1,10 +1,12 @@
 //! Model kanoniczny patcha + dekod/enkod (codec offline).
 //!
 //! Dekod rozkłada rekord na pola semantyczne (slot, nazwa, BPM, stan bloków,
-//! pola globalne) i zachowuje oryginalny blob dla bajtów spoza mapy profilu
-//! („bajty święte", ADR-0002). Enkod **rekonstruuje** znane regiony z pól
-//! semantycznych na kopii blobu — dla danych urządzenia daje wierny round-trip
-//! bajt-w-bajt, a jednocześnie dowodzi kompletności i poprawności mapy offsetów.
+//! pola globalne) ORAZ zachowuje surowe bajty każdego regionu, którego widok
+//! semantyczny jest stratny (ogon nazwy po zerze, pełny bajt selektora z bitem
+//! `0x80`, oryginalne bajty BPM), a także cały region IR i pełny blob dla bajtów
+//! spoza mapy profilu. Dzięki temu enkod jest **bezstratny bajt-w-bajt dla
+//! dowolnego wejścia** („bajty święte", ADR-0002), a pola semantyczne służą do
+//! wyświetlania/wyszukiwania/intencji edycji.
 
 use crate::device_profile::DeviceProfile;
 use crate::patch_record::PatchRecord;
@@ -16,39 +18,54 @@ const IR_REGION_OFFSET: usize = 0x82;
 pub struct BlockState {
     /// Identyfikator bloku (z profilu).
     pub id: String,
-    /// ID aktywnego modelu (dolne 6 bitów selektora).
-    pub model_id: i64,
-    /// Bypass (bit `0x40`).
-    pub bypassed: bool,
+    /// Pełny bajt selektora (bezstratny; zawiera model_id, bypass i ewentualny
+    /// bit `0x80`). Widoki semantyczne: [`BlockState::model_id`]/[`bypassed`].
+    pub selector: u8,
     /// Wartości bajtów pod `parameter_offsets` (w kolejności profilu).
     pub params: Vec<u8>,
 }
 
-/// Kanoniczny patch: pola semantyczne + zachowany blob źródłowy.
+impl BlockState {
+    /// ID aktywnego modelu (dolne 6 bitów selektora).
+    pub fn model_id(&self) -> i64 {
+        i64::from(self.selector & 0x3F)
+    }
+    /// Czy blok jest zbypassowany (bit `0x40`).
+    pub fn bypassed(&self) -> bool {
+        self.selector & 0x40 != 0
+    }
+}
+
+/// Kanoniczny patch: pola semantyczne (widoki) + surowe bajty regionów i blob
+/// dla wierności bajtowej.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalPatch {
-    /// Indeks slotu.
+    /// Indeks slotu (bezstratny — pełny UInt32 LE).
     pub slot: u32,
-    /// Nazwa patcha (do wyświetlania/wyszukiwania).
+    /// Nazwa patcha (widok — ucięta na terminatorze, UTF-8 lossy).
     pub name: String,
-    /// BPM.
+    /// BPM (widok — `msb<<7 | lsb`).
     pub bpm: i64,
     /// Stany bloków.
     pub blocks: Vec<BlockState>,
-    /// Pola globalne (nazwa → wartość bajtu).
+    /// Pola globalne (nazwa → wartość bajtu; bezstratne — surowe bajty).
     pub named_fields: std::collections::BTreeMap<String, u8>,
-    /// Czy obecny IR.
+    /// Czy obecny IR (widok).
     pub ir_present: bool,
-    /// Nazwa IR.
+    /// Nazwa IR (widok).
     pub ir_name: String,
-    /// Dokładne bajty regionu IR `0x82..record_size` (dla wierności).
+    /// Surowe bajty pola nazwy (długość = `patch_name.length`) — dla wierności.
+    name_raw: Vec<u8>,
+    /// Surowe bajty BPM `(msb, lsb)` — dla wierności.
+    bpm_raw: (u8, u8),
+    /// Dokładne bajty regionu IR `0x82..record_size` — dla wierności.
     ir_region: Vec<u8>,
     /// Oryginalny blob (źródło bajtów nieznanych profilowi).
     blob: Vec<u8>,
 }
 
 impl CanonicalPatch {
-    /// Dekoduje rekord do modelu kanonicznego.
+    /// Dekoduje rekord do modelu kanonicznego (zachowując surowe bajty regionów).
     pub fn decode(record: &PatchRecord) -> Self {
         let profile = record.profile();
         let data = record.data();
@@ -58,8 +75,7 @@ impl CanonicalPatch {
             .iter()
             .map(|block| BlockState {
                 id: block.id.clone(),
-                model_id: record.model_id(block),
-                bypassed: record.is_bypassed(block),
+                selector: data[block.selector_offset],
                 params: block.parameter_offsets.iter().map(|&o| data[o]).collect(),
             })
             .collect();
@@ -70,6 +86,9 @@ impl CanonicalPatch {
             .map(|(name, field)| (name.clone(), data[field.offset]))
             .collect();
 
+        let name_start = profile.patch_name.offset;
+        let name_end = name_start + profile.patch_name.length;
+
         CanonicalPatch {
             slot: record.slot_index(),
             name: record.name(),
@@ -78,41 +97,39 @@ impl CanonicalPatch {
             named_fields,
             ir_present: record.ir_present(),
             ir_name: record.ir_name(),
+            name_raw: data[name_start..name_end].to_vec(),
+            bpm_raw: (data[profile.bpm.msb_offset], data[profile.bpm.lsb_offset]),
             ir_region: data[IR_REGION_OFFSET..profile.record_size].to_vec(),
             blob: data.to_vec(),
         }
     }
 
-    /// Rekonstruuje bajty rekordu z pól semantycznych; bajty spoza mapy profilu
-    /// pochodzą z zachowanego blobu. Dla poprawnie zdekodowanego rekordu wynik
-    /// jest identyczny z oryginałem.
+    /// Rekonstruuje bajty rekordu. Znane regiony pochodzą z zachowanych surowych
+    /// bajtów, bajty spoza mapy profilu z blobu → wynik jest identyczny z
+    /// oryginałem dla dowolnego wejścia (bezstratność).
     pub fn encode(&self, profile: &DeviceProfile) -> Vec<u8> {
         let mut out = self.blob.clone();
 
-        // Slot (LE, 0..4).
+        // Slot (LE, 0..4) — pełny u32, bezstratny.
         out[0..4].copy_from_slice(&self.slot.to_le_bytes());
 
-        // Nazwa (dopełnienie zerami do długości pola).
-        let name_bytes = self.name.as_bytes();
+        // Nazwa — surowe bajty pola (zachowuje ogon po terminatorze).
         let start = profile.patch_name.offset;
-        for i in 0..profile.patch_name.length {
-            out[start + i] = name_bytes.get(i).copied().unwrap_or(0);
-        }
+        out[start..start + profile.patch_name.length].copy_from_slice(&self.name_raw);
 
-        // BPM (7-bit MSB/LSB).
-        out[profile.bpm.msb_offset] = ((self.bpm >> 7) & 0x7F) as u8;
-        out[profile.bpm.lsb_offset] = (self.bpm & 0x7F) as u8;
+        // BPM — surowe bajty.
+        out[profile.bpm.msb_offset] = self.bpm_raw.0;
+        out[profile.bpm.lsb_offset] = self.bpm_raw.1;
 
-        // Bloki: selektor + parametry.
+        // Bloki: pełny bajt selektora + parametry (surowe).
         for (block, state) in profile.blocks.iter().zip(self.blocks.iter()) {
-            out[block.selector_offset] =
-                (state.model_id as u8 & 0x3F) | if state.bypassed { 0x40 } else { 0 };
+            out[block.selector_offset] = state.selector;
             for (&offset, &val) in block.parameter_offsets.iter().zip(state.params.iter()) {
                 out[offset] = val;
             }
         }
 
-        // Pola globalne.
+        // Pola globalne (surowe bajty).
         for (name, field) in &profile.named_fields {
             if let Some(&val) = self.named_fields.get(name) {
                 out[field.offset] = val;

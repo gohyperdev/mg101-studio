@@ -211,4 +211,106 @@ mod tests {
             assert!(allowed.contains(&d.offset));
         }
     }
+
+    // --- Złote wartości: pinują offsety dekodowania do prawdy naziemnej ---
+
+    #[test]
+    fn golden_decoded_values_pin_offsets() {
+        let p = profile();
+        let recs = Container::split(ORACLE, p.record_size).unwrap();
+        let r0 = PatchRecord::new(recs[0].to_vec(), &p).unwrap();
+        assert_eq!(r0.slot_index(), 0);
+        assert_eq!(r0.name(), "EuroLead");
+        assert_eq!(r0.bpm(), 120);
+        let r17 = PatchRecord::new(recs[17].to_vec(), &p).unwrap();
+        assert_eq!(r17.name(), "Mayer Clean");
+        let r35 = PatchRecord::new(recs[35].to_vec(), &p).unwrap();
+        assert_eq!(r35.slot_index(), 35);
+        assert_eq!(r35.name(), "Uber");
+        assert_eq!(r35.bpm(), 100);
+    }
+
+    // --- Bezstratność na wzorcach spoza danych fabrycznych (naprawa uwagi
+    //     krytycznej z review E1): ogon nazwy po zerze, bit 0x80 selektora,
+    //     górny bit bajtu BPM, bajt w regionie nieznanym profilowi. ---
+
+    #[test]
+    fn codec_roundtrip_lossless_on_adversarial_bytes() {
+        let p = profile();
+        let mut bytes = Container::split(ORACLE, p.record_size).unwrap()[0].to_vec();
+
+        // Ogon nazwy: bajt po terminatorze "EuroLead"(8) w polu [109..125).
+        let name_start = p.patch_name.offset;
+        bytes[name_start + 8] = 0; // terminator
+        bytes[name_start + 10] = 0xAA; // śmieć po zerze
+                                       // Bit 0x80 selektora bloku amp (selector_offset=7).
+        let amp = p.block("amp").unwrap();
+        bytes[amp.selector_offset] |= 0x80;
+        // Górny bit bajtu MSB BPM.
+        bytes[p.bpm.msb_offset] |= 0x80;
+        // Bajt w regionie nieobjętym mapą profilu (offset 100).
+        bytes[100] = 0x55;
+
+        let record = PatchRecord::new(bytes.clone(), &p).unwrap();
+        let canonical = CanonicalPatch::decode(&record);
+        let reencoded = canonical.encode(&p);
+        assert_eq!(
+            reencoded, bytes,
+            "encode(decode(x)) == x dla dowolnych bajtów (bezstratność)"
+        );
+    }
+
+    // --- Ścieżki błędów (parytet semantyki błędów ze Swiftem) ---
+
+    #[test]
+    fn error_paths_match_swift_semantics() {
+        use mg101_core::PatchError;
+        let p = profile();
+        let mut r = first_record(&p);
+
+        // BPM poza zakresem profilu (40..=300).
+        assert!(matches!(r.set_bpm(9999), Err(PatchError::Bpm(9999))));
+        assert!(matches!(r.set_bpm(0), Err(PatchError::Bpm(0))));
+
+        // Nazwa dłuższa niż pole (16 B).
+        let long = "X".repeat(17);
+        assert!(matches!(
+            r.set_name(&long),
+            Err(PatchError::NameTooLong(16))
+        ));
+
+        // Nieznane pole globalne.
+        assert!(matches!(
+            r.set_named_field("nope", 1),
+            Err(PatchError::UnknownField(_))
+        ));
+
+        // IR: zła długość i brak RIFF/WAVE.
+        assert!(matches!(r.set_ir(&[0u8; 10], "x"), Err(PatchError::Ir(_))));
+        let wrong_len = p.record_size - 0xA6;
+        let mut not_riff = vec![0u8; wrong_len];
+        not_riff[0] = b'X';
+        assert!(matches!(r.set_ir(&not_riff, "x"), Err(PatchError::Ir(_))));
+
+        // Rozmiar rekordu.
+        assert!(matches!(
+            PatchRecord::new(vec![0u8; 10], &p),
+            Err(PatchError::InvalidSize {
+                expected: 8402,
+                actual: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_bad_profile() {
+        use mg101_core::{DeviceProfile, EffectCatalog, ProfileError};
+        let bad = PROFILE_JSON.replace("\"schemaVersion\": 1", "\"schemaVersion\": 2");
+        let profile = DeviceProfile::from_json(&bad).unwrap();
+        let catalog = EffectCatalog::from_json(CATALOG_JSON).unwrap();
+        assert!(matches!(
+            profile.validate(&catalog),
+            Err(ProfileError::Malformed(_))
+        ));
+    }
 }
