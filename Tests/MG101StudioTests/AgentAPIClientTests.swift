@@ -10,11 +10,11 @@ struct AgentAPIClientTests {
             model: "claude-sonnet-4-20250514",
             apiKey: "test-secret"
         )
-        let request = try AgentAPIClient.anthropicURLRequest(
-            endpoint: #require(URL(string: configuration.endpoint)),
-            system: "system instructions",
-            user: "user request",
-            configuration: configuration
+        let request = try AgentLoop.buildAnthropicRequest(
+            url: #require(URL(string: configuration.endpoint)),
+            configuration: configuration,
+            systemPrompt: "system instructions",
+            history: [ChatMessage(role: "user", content: "user request")]
         )
 
         #expect(request.httpMethod == "POST")
@@ -26,7 +26,7 @@ struct AgentAPIClientTests {
         let decoded = try JSONSerialization.jsonObject(with: body)
         let object = try #require(decoded as? [String: Any])
         #expect(object["model"] as? String == "claude-sonnet-4-20250514")
-        #expect(object["max_tokens"] as? Int == 2_048)
+        #expect(object["max_tokens"] as? Int == 4_096)
         #expect(object["system"] as? String == "system instructions")
         let messages = try #require(object["messages"] as? [[String: Any]])
         #expect(messages.count == 1)
@@ -49,5 +49,18 @@ struct AgentAPIClientTests {
         )
         #expect(!anthropic.isConfigured)
         #expect(local.isConfigured)
+    }
+
+    @Test func testEndpointNormalization() {
+        let normalize = AgentLoop.normalizeEndpoint
+
+        #expect(normalize("localhost:1234", .openAICompatible) == "http://localhost:1234/v1/chat/completions")
+        #expect(normalize("http://localhost:11434", .openAICompatible) == "http://localhost:11434/v1/chat/completions")
+        #expect(normalize("http://localhost:11434/v1", .openAICompatible) == "http://localhost:11434/v1/chat/completions")
+        #expect(normalize("https://api.openai.com", .openAICompatible) == "https://api.openai.com/v1/chat/completions")
+        #expect(normalize("https://api.anthropic.com", .anthropic) == "https://api.anthropic.com/v1/messages")
+
+        #expect(normalize("http://127.0.0.1:8080/my/custom/path", .openAICompatible) == "http://127.0.0.1:8080/my/custom/path/v1/chat/completions")
+        #expect(normalize("http://127.0.0.1:8080/custom/chat/completions", .openAICompatible) == "http://127.0.0.1:8080/custom/chat/completions")
     }
 }

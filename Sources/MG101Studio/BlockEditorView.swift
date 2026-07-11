@@ -1,4 +1,5 @@
 import MG101Core
+import MG101Tools
 import SwiftUI
 
 struct BlockEditorView: View {

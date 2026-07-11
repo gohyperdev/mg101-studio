@@ -20,14 +20,19 @@ let package = Package(
             name: "MG101Core",
             resources: [.process("Resources")]
         ),
+        .target(
+            name: "MG101Tools",
+            dependencies: ["MG101Core"]
+        ),
         .executableTarget(
             name: "MG101Studio",
-            dependencies: ["MG101Core"]
+            dependencies: ["MG101Core", "MG101Tools"]
         ),
         .executableTarget(
             name: "MG101MCP",
             dependencies: [
                 "MG101Core",
+                "MG101Tools",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
@@ -36,8 +41,12 @@ let package = Package(
             dependencies: ["MG101Core"]
         ),
         .testTarget(
+            name: "MG101ToolsTests",
+            dependencies: ["MG101Tools", "MG101Core"]
+        ),
+        .testTarget(
             name: "MG101StudioTests",
-            dependencies: ["MG101Studio", "MG101Core"]
+            dependencies: ["MG101Studio", "MG101Core", "MG101Tools"]
         ),
     ]
 )

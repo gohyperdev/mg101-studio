@@ -1,4 +1,5 @@
 import MG101Core
+import MG101Tools
 import SwiftUI
 
 struct InspectorView: View {
@@ -338,47 +339,310 @@ private struct LogicalField: Identifiable {
 
 private struct AgentView: View {
     @EnvironmentObject private var state: StudioState
+    @State private var showingSettings = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("AI change planner")
-                .font(.headline)
-            Text("Provider: \(state.agentProvider.displayName). API keys are configured in Settings and stored in Keychain.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            SettingsLink {
-                Label("Configure AI providers…", systemImage: "gearshape")
+        VStack(alignment: .leading, spacing: 0) {
+            if let session = state.currentSession {
+                sessionActiveView(session: session)
+            } else {
+                sessionListView
             }
-            TextEditor(text: $state.agentPrompt)
-                .font(.body)
-                .frame(minHeight: 120)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-            Button(state.agentBusy ? "Planning…" : "Create proposal") {
-                state.createAgentProposal()
-            }
-                .buttonStyle(.borderedProminent)
-                .disabled(state.patch == nil || state.agentPrompt.isEmpty || state.agentBusy)
+        }
+    }
 
-            if !state.agentMessage.isEmpty {
-                Text(state.agentMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            List(Array(state.proposedOperations.enumerated()), id: \.offset) { _, operation in
-                Text(String(describing: operation))
-                    .font(.caption.monospaced())
-            }
-
+    @ViewBuilder
+    private var sessionListView: some View {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Button("Discard") { state.proposedOperations.removeAll() }
+                Text("Sesje Agenta AI")
+                    .font(.title2)
+                    .bold()
                 Spacer()
-                Button("Apply changes") { state.applyAgentProposal() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .disabled(state.proposedOperations.isEmpty)
+                Button(action: { state.startNewSession() }) {
+                    Label("Nowa Sesja", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.bottom, 8)
+
+            Text("Wybierz istniejącą sesję lub utwórz nową, aby edytować presety za pomocą chatu.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(state.sessionStore.sessions) { session in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(session.title)
+                                    .font(.headline)
+                                HStack(spacing: 8) {
+                                    Text("Stan: \(session.state.rawValue)")
+                                        .font(.caption)
+                                        .foregroundStyle(session.state == .active ? .green : .secondary)
+                                    Text("Tury: \(session.turnCount)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button(action: { state.selectSession(session) }) {
+                                Text("Otwórz")
+                            }
+                            .buttonStyle(.bordered)
+                            
+                            Button(role: .destructive, action: {
+                                try? state.sessionStore.deleteSession(id: session.id)
+                            }) {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .tint(.red)
+                        }
+                        .padding()
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.25), lineWidth: 1))
+                    }
+                }
             }
         }
         .padding()
+    }
+
+    @ViewBuilder
+    private func sessionActiveView(session: AgentSessionMetadata) -> some View {
+        VStack(spacing: 0) {
+            // Toolbar
+            HStack {
+                Button(action: { state.currentSession = nil }) {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+
+                Menu {
+                    Button("Nowa Rozmowa") {
+                        state.startNewSession()
+                    }
+                    Divider()
+                    ForEach(state.sessionStore.sessions) { s in
+                        Button(s.title) {
+                            state.selectSession(s)
+                        }
+                    }
+                } label: {
+                    Text(session.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+
+                Spacer()
+
+                HStack(spacing: 12) {
+                    Text("Tury: \(session.turnCount)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    if session.state == .active {
+                        Button("Commit") {
+                            state.commitSession()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+
+                        Button("Revert") {
+                            try? state.revertSession()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    } else {
+                        Text("Stan: \(session.state.rawValue.uppercased())")
+                            .font(.caption)
+                            .bold()
+                            .foregroundStyle(session.state == .committed ? .blue : .gray)
+                    }
+                }
+            }
+            .padding()
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            // Chat Messages List
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(state.chatMessages) { msg in
+                            messageBubble(msg: msg)
+                        }
+                        
+                        if !state.agentMessage.isEmpty {
+                            streamingBubble(text: state.agentMessage)
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: state.chatMessages.count) { _ in
+                    if let last = state.chatMessages.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+
+            Divider()
+
+            // Confirmations
+            if let pending = state.pendingConfirmation {
+                VStack(spacing: 12) {
+                    Text("Autoryzacja operacji")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    
+                    Text(describeCommand(pending.command))
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    HStack(spacing: 20) {
+                        Button("Odmów", role: .cancel) {
+                            pending.continuation.resume(returning: false)
+                            state.pendingConfirmation = nil
+                        }
+                        .buttonStyle(.bordered)
+                        
+                        Button("Zezwól") {
+                            pending.continuation.resume(returning: true)
+                            state.pendingConfirmation = nil
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    }
+                }
+                .padding()
+                .background(.ultraThinMaterial)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.orange.opacity(0.5)))
+                .padding()
+            }
+
+            // Input Area
+            if session.state == .active {
+                HStack(alignment: .bottom) {
+                    TextField("Napisz prompt do AI...", text: $state.agentPrompt, axis: .vertical)
+                        .font(.body)
+                        .lineLimit(1...5)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(state.agentBusy)
+                        .onSubmit {
+                            if !state.agentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !state.agentBusy {
+                                state.runAgent()
+                            }
+                        }
+
+                    Button(action: { state.runAgent() }) {
+                        if state.agentBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(state.agentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.agentBusy)
+                }
+                .padding()
+                .background(Color(nsColor: .windowBackgroundColor))
+            } else {
+                Text("Ta sesja została zamknięta (\(session.state.rawValue)). Załóż nową sesję, aby edytować.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func messageBubble(msg: ChatMessage) -> some View {
+        HStack(alignment: .top) {
+            if msg.role == "user" {
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    if !msg.content.isEmpty {
+                        Text(msg.content)
+                            .padding(10)
+                            .background(Color.blue)
+                            .foregroundStyle(.white)
+                            .cornerRadius(12)
+                    }
+                    if let results = msg.toolResults {
+                        VStack(alignment: .trailing, spacing: 4) {
+                            ForEach(results, id: \.toolUseID) { res in
+                                Text("🔧 \(res.toolUseID.prefix(8)): \(res.isError ? "BŁĄD" : "OK")")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .padding(4)
+                                    .background(res.isError ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
+                                    .cornerRadius(6)
+                            }
+                        }
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !msg.content.isEmpty {
+                        Text(msg.content)
+                            .padding(10)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .cornerRadius(12)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.25), lineWidth: 1))
+                    }
+                    if let calls = msg.toolCalls {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(calls, id: \.id) { call in
+                                Text("🔧 Wywołanie: \(call.name)")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .padding(4)
+                                    .background(Color.orange.opacity(0.2))
+                                    .cornerRadius(6)
+                            }
+                        }
+                    }
+                }
+                Spacer()
+            }
+        }
+        .id(msg.id)
+    }
+
+    @ViewBuilder
+    private func streamingBubble(text: String) -> some View {
+        HStack {
+            Text(text)
+                .padding(10)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.25), lineWidth: 1))
+            Spacer()
+        }
+    }
+
+    private func describeCommand(_ command: DomainCommand) -> String {
+        switch command {
+        case .deletePatch(let target):
+            if case .library(let patchID, _) = target {
+                return "Miękkie usunięcie patcha o ID: \(patchID)"
+            }
+            return "Miękkie usunięcie patcha"
+        case .revertSession:
+            return "Cofnięcie całej sesji (powrót do stanu początkowego)"
+        case .importPatch(let path):
+            return "Import patcha ze ścieżki: \(path)"
+        case .exportPatch(_, let path):
+            return "Eksport patcha do ścieżki: \(path)"
+        case .setIR(_, let path, let name):
+            return "Osadzenie pliku IR '\(name)' ze ścieżki: \(path)"
+        default:
+            return "Wykonanie operacji: \(command)"
+        }
     }
 }

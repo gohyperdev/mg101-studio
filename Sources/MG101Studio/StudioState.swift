@@ -1,11 +1,18 @@
 import AppKit
 import Foundation
 import MG101Core
+import MG101Tools
+
+struct ConfirmationRequest: Identifiable, Sendable {
+    let id = UUID()
+    let command: DomainCommand
+    let continuation: CheckedContinuation<Bool, Never>
+}
 
 @MainActor
 final class StudioState: ObservableObject {
     @Published private(set) var patches: [LibraryPatch] = []
-    @Published var selectedPatchID: UUID? {
+    @Published var selectedPatchID: PatchID? {
         didSet {
             if selectedPatchID != oldValue {
                 undoStack.removeAll()
@@ -15,9 +22,21 @@ final class StudioState: ObservableObject {
         }
     }
     @Published var showingSetExporter = false
-    @Published var setSelection: Set<UUID> = []
+    @Published var setSelection: Set<PatchID> = []
     @Published var selectedBlockID = "amp"
     @Published var errorMessage: String?
+    @Published var activeSessionID: String?
+
+    var activeJournal: WALJournal? {
+        guard let id = activeSessionID else { return nil }
+        guard let url = try? SessionStore.sessionDirectory(id: id).appendingPathComponent("journal.jsonl") else { return nil }
+        return WALJournal(url: url)
+    }
+
+    @Published var pendingConfirmation: ConfirmationRequest?
+    @Published var chatMessages: [ChatMessage] = []
+    @Published var currentSession: AgentSessionMetadata?
+    let sessionStore = SessionStore()
     @Published var agentPrompt = ""
     @Published var proposedOperations: [PatchOperation] = []
     @Published var agentMessage = ""
@@ -50,6 +69,7 @@ final class StudioState: ObservableObject {
     @Published private(set) var profileSource: URL?
     private var undoStack: [PatchRecord] = []
     private var redoStack: [PatchRecord] = []
+    private var bridgeServer: MCPBridgeServer?
 
     init() {
         do {
@@ -57,8 +77,21 @@ final class StudioState: ObservableObject {
             profile = active.profile
             catalog = active.catalog
             profileSource = active.source
+            
+            // WAL Recovery
+            recoverDanglingTransactions()
+            
             patches = try PatchLibraryStore.load(profile: active.profile)
             selectedPatchID = patches.first?.id
+
+            // Start MCPBridgeServer
+            do {
+                let server = try MCPBridgeServer(state: self)
+                server.start()
+                self.bridgeServer = server
+            } catch {
+                print("Failed to start MCPBridge: \(error)")
+            }
         } catch {
             fatalError("Cannot load bundled MG-101 profile: \(error)")
         }
@@ -124,7 +157,7 @@ final class StudioState: ObservableObject {
 
     func importPatches(_ urls: [URL]) {
         perform {
-            var firstImportedID: UUID?
+            var firstImportedID: PatchID?
             for url in urls {
                 let records = try PatchCollection.records(from: url, profile: profile)
                 let ids = try appendImported(records, sourceName: url.lastPathComponent)
@@ -137,6 +170,10 @@ final class StudioState: ObservableObject {
     }
 
     func importProfilePanel() {
+        guard activeSessionID == nil else {
+            errorMessage = "Nie można zmienić profilu urządzenia przy aktywnej sesji rozmowy."
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -150,6 +187,10 @@ final class StudioState: ObservableObject {
     }
 
     func useBundledProfile() {
+        guard activeSessionID == nil else {
+            errorMessage = "Nie można zmienić profilu urządzenia przy aktywnej sesji rozmowy."
+            return
+        }
         perform {
             try ProfileLoader.removeActiveOverride()
             let loaded = try ProfileLoader.bundled()
@@ -173,7 +214,7 @@ final class StudioState: ObservableObject {
         showingSetExporter = true
     }
 
-    func toggleSetSelection(_ id: UUID) {
+    func toggleSetSelection(_ id: PatchID) {
         if setSelection.contains(id) {
             setSelection.remove(id)
         } else if setSelection.count < PatchCollection.deviceSetCount {
@@ -213,6 +254,7 @@ final class StudioState: ObservableObject {
             selectedPatchID = patches.indices.contains(index)
                 ? patches[index].id
                 : patches.last?.id
+            try PatchLibraryStore.updateIndex(patches: patches)
         }
     }
 
@@ -226,11 +268,163 @@ final class StudioState: ObservableObject {
             undoStack.append(previous)
             redoStack.removeAll()
             patches[index].patch = next
+            patches[index].revision += 1
             if patches[index].isFactory {
                 patches[index].origin = .editedFactory
                 patches[index].sourceName = "Edited factory copy"
+                try PatchLibraryStore.saveOriginal(patches[index].original, id: patches[index].id)
             }
             try PatchLibraryStore.persist(patches[index])
+            try PatchLibraryStore.updateIndex(patches: patches)
+        }
+    }
+
+    func mutatePatch(id: PatchID, expectedRevision: Int, body: (inout PatchRecord) throws -> Void) throws {
+        guard let index = patches.firstIndex(where: { $0.id == id }) else {
+            throw ToolExecutionError.notFound(id)
+        }
+        guard patches[index].revision == expectedRevision else {
+            throw ToolExecutionError.conflict(currentRevision: patches[index].revision)
+        }
+        var next = patches[index].patch
+        let previous = next
+        try body(&next)
+        guard next.data != previous.data else { return }
+        
+        var walEntry: TransactionEntry?
+        if let journal = activeJournal {
+            let sequence = (try? journal.loadEntries().count) ?? 0
+            let entry = TransactionEntry(
+                sequence: sequence,
+                timestamp: Date(),
+                toolName: "mutate",
+                patchID: id,
+                revisionBefore: patches[index].revision,
+                inverse: .restoreBytes(patchID: id, blob: previous.data),
+                beforeHash: previous.data.sha256Hex(),
+                afterHash: next.data.sha256Hex(),
+                state: .prepared
+            )
+            try journal.append(entry)
+            walEntry = entry
+        }
+        
+        if id == selectedPatchID {
+            undoStack.append(previous)
+            redoStack.removeAll()
+        }
+        
+        patches[index].patch = next
+        patches[index].revision += 1
+        
+        if patches[index].isFactory {
+            patches[index].origin = .editedFactory
+            patches[index].sourceName = "Edited factory copy"
+            try PatchLibraryStore.saveOriginal(patches[index].original, id: patches[index].id)
+        }
+        
+        try PatchLibraryStore.persist(patches[index])
+        try PatchLibraryStore.updateIndex(patches: patches)
+        
+        if let journal = activeJournal, var entry = walEntry {
+            entry.state = .committed
+            try journal.append(entry)
+        }
+    }
+
+    func duplicatePatch(id: PatchID, expectedRevision: Int) throws -> PatchID {
+        guard let index = patches.firstIndex(where: { $0.id == id }) else {
+            throw ToolExecutionError.notFound(id)
+        }
+        guard patches[index].revision == expectedRevision else {
+            throw ToolExecutionError.conflict(currentRevision: patches[index].revision)
+        }
+        
+        let source = patches[index]
+        let newID = UUID().uuidString
+        
+        var walEntry: TransactionEntry?
+        if let journal = activeJournal {
+            let sequence = (try? journal.loadEntries().count) ?? 0
+            let entry = TransactionEntry(
+                sequence: sequence,
+                timestamp: Date(),
+                toolName: "duplicate",
+                patchID: newID,
+                revisionBefore: 0,
+                inverse: .removePatch(patchID: newID),
+                beforeHash: "",
+                afterHash: source.patch.data.sha256Hex(),
+                state: .prepared
+            )
+            try journal.append(entry)
+            walEntry = entry
+        }
+        
+        let copy = LibraryPatch(
+            id: newID,
+            patch: source.patch,
+            original: source.original,
+            sourceName: "Copy of \(source.patch.name)",
+            origin: .imported,
+            revision: 1
+        )
+        
+        try PatchLibraryStore.persist(copy)
+        try PatchLibraryStore.saveOriginal(source.original, id: newID)
+        patches.append(copy)
+        try PatchLibraryStore.updateIndex(patches: patches)
+        
+        if let journal = activeJournal, var entry = walEntry {
+            entry.state = .committed
+            try journal.append(entry)
+        }
+        return newID
+    }
+
+    func deletePatch(id: PatchID, expectedRevision: Int) throws {
+        guard let index = patches.firstIndex(where: { $0.id == id }) else {
+            throw ToolExecutionError.notFound(id)
+        }
+        guard patches[index].revision == expectedRevision else {
+            throw ToolExecutionError.conflict(currentRevision: patches[index].revision)
+        }
+        let removed = patches[index]
+        
+        var walEntry: TransactionEntry?
+        if let sessionID = activeSessionID, let journal = activeJournal {
+            let sequence = (try? journal.loadEntries().count) ?? 0
+            let meta = PatchLibraryStore.makeStagedMetadata(removed)
+            let entry = TransactionEntry(
+                sequence: sequence,
+                timestamp: Date(),
+                toolName: "delete",
+                patchID: id,
+                revisionBefore: removed.revision,
+                inverse: .restoreFromStaging(patchID: id, meta: meta),
+                beforeHash: removed.patch.data.sha256Hex(),
+                afterHash: "",
+                state: .prepared
+            )
+            try journal.append(entry)
+            walEntry = entry
+            
+            try PatchLibraryStore.stagePhysicalFiles(removed, sessionID: sessionID)
+        } else {
+            try PatchLibraryStore.remove(removed)
+        }
+        
+        patches.remove(at: index)
+        if selectedPatchID == id {
+            selectedPatchID = patches.indices.contains(index)
+                ? patches[index].id
+                : patches.last?.id
+        }
+        try PatchLibraryStore.updateIndex(patches: patches)
+        
+        if let journal = activeJournal, var entry = walEntry {
+            entry.state = .committed
+            try journal.append(entry)
         }
     }
 
@@ -296,7 +490,9 @@ final class StudioState: ObservableObject {
         let current = patches[index].patch
         redoStack.append(current)
         patches[index].patch = previous
+        patches[index].revision += 1
         try? PatchLibraryStore.persist(patches[index])
+        try? PatchLibraryStore.updateIndex(patches: patches)
     }
 
     func redo() {
@@ -306,7 +502,9 @@ final class StudioState: ObservableObject {
         let current = patches[index].patch
         undoStack.append(current)
         patches[index].patch = next
+        patches[index].revision += 1
         try? PatchLibraryStore.persist(patches[index])
+        try? PatchLibraryStore.updateIndex(patches: patches)
     }
 
     func createAgentProposal() {
@@ -380,8 +578,21 @@ final class StudioState: ObservableObject {
             UserDefaults.standard.set(openAIModel, forKey: "agent.openai.model")
             UserDefaults.standard.set(anthropicEndpoint, forKey: "agent.anthropic.endpoint")
             UserDefaults.standard.set(anthropicModel, forKey: "agent.anthropic.model")
-            try KeychainStore.write(openAIAPIKey, account: "openai")
-            try KeychainStore.write(anthropicAPIKey, account: "anthropic")
+            
+            do {
+                try KeychainStore.write(openAIAPIKey, account: "openai")
+                UserDefaults.standard.removeObject(forKey: "agent.openai.apikey.fallback")
+            } catch {
+                UserDefaults.standard.set(openAIAPIKey, forKey: "agent.openai.apikey.fallback")
+            }
+
+            do {
+                try KeychainStore.write(anthropicAPIKey, account: "anthropic")
+                UserDefaults.standard.removeObject(forKey: "agent.anthropic.apikey.fallback")
+            } catch {
+                UserDefaults.standard.set(anthropicAPIKey, forKey: "agent.anthropic.apikey.fallback")
+            }
+
             settingsMessage = "Settings and keys saved."
         }
     }
@@ -392,12 +603,24 @@ final class StudioState: ObservableObject {
                 account: "openai",
                 allowInteraction: allowInteraction
             )
+        } catch {
+            openAIAPIKey = UserDefaults.standard.string(forKey: "agent.openai.apikey.fallback") ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? ""
+        }
+
+        do {
             anthropicAPIKey = try KeychainStore.read(
                 account: "anthropic",
                 allowInteraction: allowInteraction
             )
         } catch {
-            errorMessage = error.localizedDescription
+            anthropicAPIKey = UserDefaults.standard.string(forKey: "agent.anthropic.apikey.fallback") ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+        }
+
+        if openAIAPIKey.isEmpty {
+            openAIAPIKey = UserDefaults.standard.string(forKey: "agent.openai.apikey.fallback") ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? ""
+        }
+        if anthropicAPIKey.isEmpty {
+            anthropicAPIKey = UserDefaults.standard.string(forKey: "agent.anthropic.apikey.fallback") ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
         }
     }
 
@@ -450,21 +673,24 @@ final class StudioState: ObservableObject {
     private func appendImported(
         _ records: [PatchRecord],
         sourceName: String
-    ) throws -> [UUID] {
+    ) throws -> [PatchID] {
         var imported: [LibraryPatch] = []
         for record in records {
             let item = LibraryPatch(
-                id: UUID(),
+                id: UUID().uuidString,
                 patch: record,
                 original: record,
                 sourceName: sourceName,
-                origin: .imported
+                origin: .imported,
+                revision: 1
             )
             try PatchLibraryStore.persist(item)
+            try PatchLibraryStore.saveOriginal(record, id: item.id)
             imported.append(item)
         }
         patches.append(contentsOf: imported)
         selectedPatchID = imported.first?.id ?? selectedPatchID
+        try PatchLibraryStore.updateIndex(patches: patches)
         return imported.map(\.id)
     }
 
@@ -482,5 +708,389 @@ final class StudioState: ObservableObject {
         proposedOperations.removeAll()
         undoStack.removeAll()
         redoStack.removeAll()
+    }
+
+    func revertSession() throws {
+        guard let sessionID = activeSessionID, let journal = activeJournal else {
+            throw ToolExecutionError.custom("No active session or journal found")
+        }
+        let entries = try journal.loadEntries()
+        let committedSeqs = Set(entries.filter { $0.state == .committed }.map(\.sequence))
+        let toRevert = entries.filter { $0.state == .prepared && (committedSeqs.contains($0.sequence) || $0.sequence == entries.last?.sequence) }
+            .sorted { $0.sequence > $1.sequence }
+        
+        for entry in toRevert {
+            try applyInverse(entry, sessionID: sessionID)
+        }
+        
+        try? PatchLibraryStore.clearStaging(sessionID: sessionID)
+        try journal.rewrite([])
+        
+        self.patches = try PatchLibraryStore.load(profile: profile)
+        if selectedPatchID == nil || !patches.contains(where: { $0.id == selectedPatchID }) {
+            selectedPatchID = patches.first?.id
+        }
+    }
+    
+    func revertLastAgentAction() throws {
+        guard let sessionID = activeSessionID, let journal = activeJournal else {
+            throw ToolExecutionError.custom("No active session or journal found")
+        }
+        let entries = try journal.loadEntries()
+        let committed = entries.filter { $0.state == .committed }.sorted { $0.sequence > $1.sequence }
+        guard let lastCommitted = committed.first else {
+            throw ToolExecutionError.custom("No committed actions to revert")
+        }
+        
+        try applyInverse(lastCommitted, sessionID: sessionID)
+        
+        let filtered = entries.filter { $0.sequence != lastCommitted.sequence }
+        try journal.rewrite(filtered)
+        
+        self.patches = try PatchLibraryStore.load(profile: profile)
+        if selectedPatchID == nil || !patches.contains(where: { $0.id == selectedPatchID }) {
+            selectedPatchID = patches.first?.id
+        }
+    }
+    
+    private func applyInverse(_ entry: TransactionEntry, sessionID: String) throws {
+        switch entry.inverse {
+        case .restoreBytes(let id, let blob):
+            guard let index = patches.firstIndex(where: { $0.id == id }) else {
+                throw ToolExecutionError.custom("Revert conflict: patch \(id) missing from library")
+            }
+            let currentHash = patches[index].patch.data.sha256Hex()
+            guard currentHash == entry.afterHash else {
+                throw ToolExecutionError.custom("Revert conflict: patch \(id) has manual edits")
+            }
+            var item = patches[index]
+            item.patch = try PatchRecord(data: blob, profile: profile)
+            item.revision = entry.revisionBefore
+            
+            if id.hasPrefix("factory-") && item.patch.data == item.original.data {
+                item.origin = .factory
+                let indexInt = Int(id.dropFirst(8)) ?? 1
+                item.sourceName = String(format: "Factory %02d", indexInt)
+                let directory = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                ).appendingPathComponent("MG101Studio", isDirectory: true)
+                 .appendingPathComponent("PatchLibrary", isDirectory: true)
+                let patchURL = directory.appendingPathComponent(id).appendingPathExtension("mg101patch")
+                try? FileManager.default.removeItem(at: patchURL)
+            } else {
+                try PatchLibraryStore.persist(item)
+            }
+            
+        case .removePatch(let id):
+            guard let index = patches.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            let currentHash = patches[index].patch.data.sha256Hex()
+            guard currentHash == entry.afterHash else {
+                throw ToolExecutionError.custom("Revert conflict: duplicated patch \(id) has manual edits")
+            }
+            let removed = patches[index]
+            try PatchLibraryStore.remove(removed)
+            
+        case .restoreFromStaging(let id, let meta):
+            guard !patches.contains(where: { $0.id == id }) else {
+                throw ToolExecutionError.custom("Revert conflict: patch \(id) already exists")
+            }
+            try PatchLibraryStore.restoreFromStaging(id: id, sessionID: sessionID, meta: meta)
+        }
+    }
+    
+    func recoverDanglingTransactions() {
+        do {
+            let sessionsDir = try SessionStore.sessionsDirectory()
+            guard FileManager.default.fileExists(atPath: sessionsDir.path) else { return }
+            let sessionDirs = try FileManager.default.contentsOfDirectory(
+                at: sessionsDir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            for sessionDir in sessionDirs {
+                let journalURL = sessionDir.appendingPathComponent("journal.jsonl")
+                let metaURL = sessionDir.appendingPathComponent("session.json")
+                guard FileManager.default.fileExists(atPath: journalURL.path),
+                      FileManager.default.fileExists(atPath: metaURL.path)
+                else { continue }
+                
+                let journal = WALJournal(url: journalURL)
+                let entries = try journal.loadEntries()
+                let prepared = entries.filter { $0.state == .prepared }
+                let committed = Set(entries.filter { $0.state == .committed }.map(\.sequence))
+                
+                var dangling = prepared.filter { !committed.contains($0.sequence) }
+                if !dangling.isEmpty {
+                    dangling.sort { $0.sequence > $1.sequence }
+                    let sessionID = sessionDir.lastPathComponent
+                    
+                    let libraryDir = try PatchLibraryStore.libraryDirectory()
+                    
+                    for entry in dangling {
+                        let patchFile = libraryDir.appendingPathComponent(entry.patchID).appendingPathExtension("mg101patch")
+                        let fileExists = FileManager.default.fileExists(atPath: patchFile.path)
+                        let currentHash: String
+                        if fileExists, let data = try? Data(contentsOf: patchFile) {
+                            currentHash = data.sha256Hex()
+                        } else {
+                            currentHash = ""
+                        }
+                        
+                        if currentHash == entry.beforeHash {
+                            let filtered = entries.filter { $0.sequence != entry.sequence }
+                            try journal.rewrite(filtered)
+                        } else if currentHash == entry.afterHash {
+                            var committedEntry = entry
+                            committedEntry.state = .committed
+                            try journal.append(committedEntry)
+                        } else {
+                            switch entry.inverse {
+                            case .restoreBytes(_, let blob):
+                                try blob.write(to: patchFile, options: .atomic)
+                            case .removePatch(let id):
+                                if fileExists {
+                                    try? FileManager.default.removeItem(at: patchFile)
+                                    let originalFile = libraryDir.appendingPathComponent(".originals").appendingPathComponent(id).appendingPathExtension("mg101patch")
+                                    try? FileManager.default.removeItem(at: originalFile)
+                                }
+                            case .restoreFromStaging(let id, let meta):
+                                try? PatchLibraryStore.restoreFromStaging(id: id, sessionID: sessionID, meta: meta)
+                            }
+                            let filtered = entries.filter { $0.sequence != entry.sequence }
+                            try journal.rewrite(filtered)
+                        }
+                    }
+                }
+            }
+        } catch {
+            print("WAL Recovery failed: \(error)")
+        }
+    }
+
+    func startNewSession() {
+        perform {
+            // Make a unique hash representing active profile to bind session
+            let profileHash = Self.calculateProfileHash()
+            let path = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            ).appendingPathComponent("MG101Studio/PatchLibrary").path
+            
+            let meta = try sessionStore.createSession(
+                provider: agentProvider.displayName,
+                model: agentProvider == .anthropic ? anthropicModel : openAIModel,
+                profileHash: profileHash,
+                libraryPath: path
+            )
+            self.currentSession = meta
+            self.activeSessionID = meta.id
+            self.chatMessages = []
+        }
+    }
+    
+    func selectSession(_ session: AgentSessionMetadata) {
+        perform {
+            let currentHash = Self.calculateProfileHash()
+            guard session.profileHash == currentHash else {
+                throw ToolExecutionError.custom("Nie można wznowić sesji: profil powiązany z sesją nie zgadza się z aktualnym profilem urządzenia.")
+            }
+            self.currentSession = session
+            self.activeSessionID = session.id
+            self.chatMessages = try sessionStore.loadMessages(sessionID: session.id)
+        }
+    }
+    
+    func runAgent() {
+        guard let session = currentSession else { return }
+        let configuration = activeAgentConfiguration
+        
+        agentBusy = true
+        agentMessage = ""
+        errorMessage = nil
+        
+        let sessionID = session.id
+        
+        let system = """
+        You are the native NUX MG-101 Preset Editor agent.
+        You communicate via multi-turn tool calling.
+        Never invent blocks, model ids, parameter names or ranges.
+        Use tools to list patches, get detail, mutate blocks/models/parameters, or duplicate/delete presets.
+        Always verify current revisions before mutating.
+        """
+        
+        let executor = GUIToolExecutor(state: self)
+        
+        Task {
+            do {
+                var approvedRoots = session.approvedRoots
+                
+                let loop = AgentLoop(
+                    configuration: configuration,
+                    executor: executor,
+                    systemPrompt: system,
+                    sessionID: sessionID,
+                    needsConfirmation: { [weak self] cmd in
+                        guard let self else { return false }
+                        return await withCheckedContinuation { continuation in
+                            Task { @MainActor in
+                                self.pendingConfirmation = ConfirmationRequest(
+                                    command: cmd,
+                                    continuation: continuation
+                                )
+                            }
+                        }
+                    },
+                    onMessageStream: { [weak self] chunk in
+                        guard let self else { return }
+                        Task { @MainActor in
+                            self.agentMessage.append(chunk)
+                        }
+                    }
+                )
+                
+                let userMsg = ChatMessage(role: "user", content: agentPrompt)
+                await MainActor.run {
+                    self.chatMessages.append(userMsg)
+                    self.agentPrompt = ""
+                }
+                try sessionStore.appendMessage(sessionID: sessionID, message: userMsg)
+                
+                let updatedHistory = try await loop.run(history: chatMessages, approvedRoots: &approvedRoots)
+                
+                try await MainActor.run {
+                    var updatedSession = session
+                    updatedSession.approvedRoots = approvedRoots
+                    updatedSession.turnCount += 1
+                    updatedSession.updatedAt = Date()
+                    
+                    self.currentSession = updatedSession
+                    try self.sessionStore.saveSessionMetadata(updatedSession)
+                    
+                    let newMsgs = updatedHistory.suffix(from: self.chatMessages.count)
+                    for newMsg in newMsgs {
+                        try self.sessionStore.appendMessage(sessionID: sessionID, message: newMsg)
+                    }
+                    self.chatMessages = updatedHistory
+                    self.agentMessage = ""
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+            await MainActor.run {
+                self.agentBusy = false
+            }
+        }
+    }
+    
+    func commitSession() {
+        guard var session = currentSession else { return }
+        perform {
+            session.state = .committed
+            session.updatedAt = Date()
+            self.currentSession = session
+            try sessionStore.saveSessionMetadata(session)
+            try? PatchLibraryStore.clearStaging(sessionID: session.id)
+        }
+    }
+
+    static func calculateProfileHash() -> String {
+        do {
+            let directory = try ProfileLoader.applicationSupportDirectory()
+            let profileURL = directory.appendingPathComponent(ProfileLoader.profileFileName)
+            let catalogURL = directory.appendingPathComponent(ProfileLoader.catalogFileName)
+
+            var profileData: Data
+            var catalogData: Data
+
+            if FileManager.default.fileExists(atPath: profileURL.path),
+               FileManager.default.fileExists(atPath: catalogURL.path) {
+                profileData = try Data(contentsOf: profileURL)
+                catalogData = try Data(contentsOf: catalogURL)
+            } else {
+                guard let bundledProfileURL = ProfileLoader.bundledResourceURL(forResource: "device-profile", withExtension: "json"),
+                      let bundledCatalogURL = ProfileLoader.bundledResourceURL(forResource: "effects-catalog", withExtension: "json")
+                else {
+                    return "default"
+                }
+                profileData = try Data(contentsOf: bundledProfileURL)
+                catalogData = try Data(contentsOf: bundledCatalogURL)
+            }
+
+            var combined = Data()
+            combined.append(profileData)
+            combined.append(catalogData)
+            return combined.sha256Hex()
+        } catch {
+            return "default"
+        }
+    }
+
+    func importPatch(path: String) throws -> [PatchID] {
+        let url = URL(fileURLWithPath: path)
+        let records = try PatchCollection.records(from: url, profile: profile)
+        guard !records.isEmpty else { return [] }
+
+        var importedIDs: [PatchID] = []
+        var walEntries: [TransactionEntry] = []
+        let count = (try? activeJournal?.loadEntries().count) ?? 0
+
+        for (index, record) in records.enumerated() {
+            let newID = UUID().uuidString
+
+            if let journal = activeJournal {
+                let entry = TransactionEntry(
+                    sequence: count + index,
+                    timestamp: Date(),
+                    toolName: "import_patch",
+                    patchID: newID,
+                    revisionBefore: 0,
+                    inverse: .removePatch(patchID: newID),
+                    beforeHash: "",
+                    afterHash: record.data.sha256Hex(),
+                    state: .prepared
+                )
+                try journal.append(entry)
+                walEntries.append(entry)
+            }
+
+            let item = LibraryPatch(
+                id: newID,
+                patch: record,
+                original: record,
+                sourceName: url.deletingPathExtension().lastPathComponent,
+                origin: .imported,
+                revision: 1
+            )
+            try PatchLibraryStore.persist(item)
+            try PatchLibraryStore.saveOriginal(record, id: item.id)
+            patches.append(item)
+            importedIDs.append(newID)
+        }
+
+        selectedPatchID = importedIDs.first ?? selectedPatchID
+        try PatchLibraryStore.updateIndex(patches: patches)
+
+        if let journal = activeJournal {
+            for entry in walEntries {
+                var commit = entry
+                commit.state = .committed
+                try journal.append(commit)
+            }
+        }
+
+        return importedIDs
+    }
+
+    func reloadPatches() throws {
+        self.patches = try PatchLibraryStore.load(profile: profile)
     }
 }
