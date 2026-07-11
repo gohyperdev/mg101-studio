@@ -13,10 +13,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod fingerprint;
+#[cfg(not(target_arch = "wasm32"))]
+mod sqlite;
 mod store;
 mod sync;
 
 pub use fingerprint::{content_hash, exact_hash, MaskRange};
+#[cfg(not(target_arch = "wasm32"))]
+pub use sqlite::SqliteStore;
 pub use store::{LibraryError, LibraryStore, MemoryStore};
 pub use sync::{slot_sync_state, SlotView, SyncState};
 
