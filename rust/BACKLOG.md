@@ -21,11 +21,24 @@
 - Duplikacja `resources/*.json` vs `Sources/MG101Core/Resources/` — test/krok
   build porównujący albo jedno źródło (ryzyko dryfu).
 
-## Do E2 (przed pracą na żywym sprzęcie)
-- `device-link` `SysexAssembler` (odziedziczone z probe — wierność zachowana):
-  domknąć obsługę realtime (`F8–FF`) wplecionego w SysEx i między bajtami
-  running-status (nie kasować częściowego CC), oraz przerwanie sklejania SysEx
-  przy statusie ≠F0/F7 (ochrona przed niekończącym się buforem). Dodać testy.
+## Do E2 (przed pracą na żywym sprzęcie) — ZROBIONE
+- [x] `SysexAssembler`: realtime passthrough, przerwanie uciętego SysEx (+testy).
+- [x] `device-pack-api`: `per_bank`, `erasable`, `read_bank`.
+- [x] `read_slot`: pętla z deadlinem (nie martwa na sprzęcie).
+
+## Integracja sprzętowa E2 (wymaga fizycznego MG-101 + zgody)
+- Potwierdzić mapowanie `bank→indeks` (`user`=0.., `factory`=36..) na sprzęcie.
+- `write_slot` fire-and-forget → dodać oczekiwanie na ACK zapisu (capture 04b
+  pokazuje, że sprzęt ACK-uje) [S4 z review E2].
+- Obsługa części `09` (54 B) presetu obok `0B` (189 B) — pełny preset to para.
+- Transkodowanie rekord urządzenia (189 B) ↔ plik `.mg101patch` (8402 B, IR) —
+  osobny kodek (E1 obsługuje plik, E2 rekord wire).
+
+## Nity z review E2 (opcjonalne)
+- `SysexAssembler`: SysEx/system-common powinny kasować running status; luźny
+  `F7` bez `F0` ustawia `running_status=F7` (tani guard).
+- `ProtocolError`: wariant `Link(...)` zamiast mapowania błędów transportu na
+  `BadResponse`; wariant `ReadOnly` obecnie martwy.
 
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.

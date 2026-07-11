@@ -2,15 +2,18 @@
 //!
 //! Ramka: `F0 43 58 70 <TYPE> <SUB> <IDX> [payload] F7` (empiria `findings.md`).
 //! `43 58` = prefiks producenta NUX/Cherub, `70` = model. `SUB`: `00`=żądanie,
-//! `01`=zapis, `02`=dane. Rekord slotu (`TYPE 0B`) to 189 B (same parametry,
-//! bez IR) — inny niż kontener `.mg101patch` (8402 B) z E1.
+//! `01`=zapis, `02`=dane. Rekord slotu (`TYPE 0B`) to **189 B na łączu**; capture
+//! 04b pokazuje payload zapisu dokładnie 189 B o wartościach 0x00–0x64 (naturalnie
+//! 7-bitowe) — więc to jest forma wire, a warstwa operuje na niej wprost.
 //!
-//! UWAGA (do potwierdzenia na sprzęcie w E2): (1) mapowanie `bank→indeks
-//! urządzenia` (`user`=0.., `factory`=36..); (2) **kodowanie payloadu na strumień
-//! 7-bitowy** — MIDI SysEx dopuszcza w danych tylko wartości `0x00..=0x7F`, więc
-//! surowy 189-bajtowy rekord (bajty 0..255) jest na łączu 7-bitowo zakodowany
-//! (nibble/high-bit — do zdekodowania na sprzęcie). Ta warstwa operuje na
-//! payloadzie WIRE (7-bit); transkodowanie wire↔rekord jest ZAPARKOWANE.
+//! Zakres i rzeczy hardware-gated (do potwierdzenia na fizycznym MG-101):
+//! - mapowanie `bank→indeks urządzenia` (`user`=0.., `factory`=36..) — PROWIZORYCZNE;
+//! - **transkodowanie rekord urządzenia (189 B) ↔ plik `.mg101patch` (8402 B)** —
+//!   ZAPARKOWANE (to inny kodek niż wire; plik ma osadzony IR — `findings.md`);
+//! - pełny preset to para ramek `09` (54 B) + `0B` (189 B); tu obsługiwana jest
+//!   część `0B` (parametry), część `09` poza zakresem E2;
+//! - `write_slot` jest fire-and-forget; sprzęt ACK-uje zapis (capture 04b) —
+//!   oczekiwanie na ACK do dodania przy integracji sprzętowej (BACKLOG).
 
 use mg101_device_link::{DeviceLink, SysexAssembler};
 use mg101_device_pack_api::{DeviceProtocol, ProtocolError, SlotAddr};
@@ -37,6 +40,11 @@ fn is_7bit(payload: &[u8]) -> bool {
 const USER_BASE: u16 = 0;
 const FACTORY_BASE: u16 = 36;
 
+/// Limit oczekiwania na ramkę danych ze sprzętu.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+/// Odstęp między nieblokującymi odpytaniami łącza.
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// Protokół MG-101.
 pub struct Mg101Protocol;
 
@@ -61,7 +69,9 @@ impl Mg101Protocol {
             "factory" => FACTORY_BASE,
             _ => return Err(ProtocolError::BadAddr(addr.clone())),
         };
-        u8::try_from(base + addr.index).map_err(|_| ProtocolError::BadAddr(addr.clone()))
+        // Liczenie w u32 chroni przed przepełnieniem u16 przy dużym indeksie.
+        u8::try_from(u32::from(base) + u32::from(addr.index))
+            .map_err(|_| ProtocolError::BadAddr(addr.clone()))
     }
 
     /// Wyodrębnia payload z ramki danych `0B 02 <idx> <payload> F7` dla `idx`.
@@ -91,25 +101,24 @@ impl DeviceProtocol for Mg101Protocol {
         link.send(&Self::frame(SUB_REQUEST, idx, &[]))
             .map_err(|e| ProtocolError::BadResponse(e.to_string()))?;
 
-        // Zbieramy odpowiedzi (mogą być rozbite na pakiety) i szukamy ramki
-        // danych dla naszego indeksu. Backend sprzętowy dostarcza bajty między
-        // kolejnymi `poll` (timing po stronie backendu); tu limit iteracji.
+        // Zbieramy odpowiedzi (mogą być rozbite na pakiety, mogą być poprzedzone
+        // szumem) do momentu znalezienia ramki danych naszego indeksu albo
+        // upływu deadline'u. `MidirLink::poll` jest nieblokujące — odpytujemy
+        // z krótkim odstępem, aż sprzęt odpowie.
         let mut asm = SysexAssembler::new();
-        for _ in 0..1024 {
-            let packets = link.poll();
-            if packets.is_empty() {
-                break;
-            }
-            for p in packets {
+        let deadline = std::time::Instant::now() + READ_TIMEOUT;
+        while std::time::Instant::now() < deadline {
+            for p in link.poll() {
                 for frame in asm.push(&p) {
                     if let Some(payload) = Self::parse_data(&frame, idx) {
                         return Ok(payload);
                     }
                 }
             }
+            std::thread::sleep(POLL_INTERVAL);
         }
         Err(ProtocolError::BadResponse(format!(
-            "brak ramki danych dla slotu idx={idx}"
+            "brak ramki danych dla slotu idx={idx} w limicie czasu"
         )))
     }
 
@@ -202,7 +211,45 @@ mod tests {
     }
 
     #[test]
-    fn write_slot_frames_correctly_and_validates_len() {
+    fn frame_bytes_match_findings_grammar() {
+        // Golden: ramka żądania odczytu slotu idx=3 wg findings.md.
+        assert_eq!(
+            Mg101Protocol::frame(SUB_REQUEST, 3, &[]),
+            vec![0xF0, 0x43, 0x58, 0x70, 0x0B, 0x00, 0x03, 0xF7]
+        );
+        // Golden: ramka zapisu z 3-bajtowym payloadem.
+        assert_eq!(
+            Mg101Protocol::frame(SUB_WRITE, 5, &[0x10, 0x20, 0x30]),
+            vec![0xF0, 0x43, 0x58, 0x70, 0x0B, 0x01, 0x05, 0x10, 0x20, 0x30, 0xF7]
+        );
+    }
+
+    #[test]
+    fn read_slot_reassembles_split_frame_and_ignores_noise() {
+        // Sprzęt: najpierw ramka-szum (inny TYPE 0x14), potem ramka danych
+        // rozbita na dwa pakiety. read_slot ma ją złożyć i pominąć szum.
+        let mut link = MockLink::new(|sent| {
+            if sent.len() == 8 && sent[5] == SUB_REQUEST {
+                let idx = sent[6];
+                let payload: Vec<u8> = (0..8).map(|i| (i as u8) & 0x7F).collect();
+                let data = Mg101Protocol::frame(SUB_DATA, idx, &payload);
+                let (a, b) = data.split_at(4);
+                let noise = vec![0xF0, 0x43, 0x58, 0x70, 0x14, 0x02, 0x00, 0xF7];
+                vec![noise, a.to_vec(), b.to_vec()]
+            } else {
+                vec![]
+            }
+        });
+        let addr = SlotAddr {
+            bank: "user".into(),
+            index: 7,
+        };
+        let payload = Mg101Protocol.read_slot(&mut link, &addr).unwrap();
+        assert_eq!(payload, (0..8).map(|i| i as u8).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn write_slot_frames_correctly_and_validates_7bit() {
         let mut link = MockLink::new(|_| vec![]);
         let addr = SlotAddr {
             bank: "user".into(),
