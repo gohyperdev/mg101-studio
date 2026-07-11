@@ -26,6 +26,10 @@ fn entry(provider: Provider) -> Option<keyring::Entry> {
 
 /// Odczytuje klucz API dostawcy z magazynu sekretów. `None`, gdy brak wpisu lub
 /// magazyn niedostępny (nie jest to błąd — użytkownik wpisze klucz ręcznie).
+///
+/// UWAGA: na macOS wywołanie może **zablokować** wątek do czasu decyzji w oknie
+/// dostępu do Keychain (przy nowym/przebudowanym binarium). Nie wołaj na wątku UI
+/// przed pokazaniem okna — użyj [`load_key_async`].
 pub fn load_key(provider: Provider) -> Option<String> {
     let key = entry(provider)?.get_password().ok()?;
     let key = key.trim().to_string();
@@ -34,6 +38,17 @@ pub fn load_key(provider: Provider) -> Option<String> {
     } else {
         Some(key)
     }
+}
+
+/// Wersja nieblokująca: odczyt klucza na wątku w tle. Zwraca odbiornik, z którego
+/// UI pobierze wynik, gdy magazyn odpowie (okno pojawia się natychmiast, nawet
+/// gdy macOS czeka na zgodę dostępu do Keychain).
+pub fn load_key_async(provider: Provider) -> std::sync::mpsc::Receiver<Option<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(load_key(provider));
+    });
+    rx
 }
 
 /// Zapisuje (lub usuwa, gdy pusty) klucz API dostawcy — persystencja jak v1.

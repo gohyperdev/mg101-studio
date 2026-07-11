@@ -362,26 +362,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
     let runner: Rc<RefCell<Option<ChatRunner>>> = Rc::new(RefCell::new(None));
 
-    // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — jeśli jest,
-    // wstrzyknij do konfiguracji, by agent był od razu gotowy bez wpisywania.
-    {
-        let mut vmb = vm.borrow_mut();
-        let mut cfg = vmb.agent_config().clone();
-        if cfg.api_key.is_empty() {
-            if let Some(key) = mg101_desktop::keychain::load_key(cfg.provider) {
-                // Log bez sekretu — tylko potwierdzenie i długość.
-                eprintln!(
-                    "Klucz API wczytany z magazynu (dostawca {:?}, długość {}).",
-                    cfg.provider,
-                    key.len()
-                );
-                cfg.api_key = key;
-                vmb.set_agent_config(cfg);
-            } else {
-                eprintln!("Brak klucza API w magazynie — wpisz w Ustawieniach.");
-            }
-        }
-    }
+    // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — ODCZYT W TLE.
+    // Na macOS dostęp do Keychain potrafi zablokować wątek do czasu zgody w oknie
+    // systemowym; robienie tego na wątku UI przed `run()` zawieszało start okna.
+    // Odbiornik odpytujemy w pompie i wstrzykujemy klucz, gdy dotrze.
+    let key_provider = vm.borrow().agent_config().provider;
+    let key_rx: Rc<RefCell<Option<std::sync::mpsc::Receiver<Option<String>>>>> = Rc::new(
+        RefCell::new(Some(mg101_desktop::keychain::load_key_async(key_provider))),
+    );
 
     // Zasianie Biblioteki przy pierwszym starcie (pusta) — 36 patchy fabrycznych,
     // parytet v1. Trwałe (SqliteStore), więc dzieje się raz. Bez sprzętu.
@@ -635,9 +623,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let dslot = dumper.clone();
+        let krx = key_rx.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
+            // Klucz API z Keychain (odczyt w tle) — wstrzyknij, gdy dotrze.
+            {
+                let mut slot = krx.borrow_mut();
+                if let Some(rx) = slot.as_ref() {
+                    if let Ok(result) = rx.try_recv() {
+                        *slot = None; // jednorazowo
+                        let mut vm = vmc.borrow_mut();
+                        let mut cfg = vm.agent_config().clone();
+                        if cfg.api_key.is_empty() {
+                            match result {
+                                Some(key) => {
+                                    eprintln!(
+                                        "Klucz API wczytany z magazynu (dostawca {:?}, długość {}).",
+                                        cfg.provider,
+                                        key.len()
+                                    );
+                                    cfg.api_key = key;
+                                    vm.set_agent_config(cfg);
+                                    ui.set_cfg_key(vm.agent_config().api_key.clone().into());
+                                }
+                                None => eprintln!("Brak klucza API w magazynie — wpisz w Ustawieniach."),
+                            }
+                        }
+                    }
+                }
+            }
             // Detekcja hotplug co ~2 s (gdy nie trwa zrzut).
             {
                 let mut t = tick.borrow_mut();
