@@ -8,6 +8,7 @@ members = [
     "crates/device-pack-api",
     "crates/device-link",
     "crates/pack-nux-mg101",
+    "crates/commands",
     "crates/library",
     "crates/transfer-engine",
     "crates/agent-core",

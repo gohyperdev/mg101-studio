@@ -212,6 +212,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mg101-commands"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "mg101-core"
 version = "0.1.0"
 dependencies = [
