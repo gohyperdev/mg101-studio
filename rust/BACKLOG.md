@@ -207,6 +207,21 @@
   oryginału (wspólne z E6/W3 baseline). `tr` → echo klucza zamiast „??". Emoji w
   UI (🔒/✕) — ryzyko tofu na Windows/FemtoVG.
 
+## Z review E7-parytet (agent-chat/wątek — naprawione lub zaplanowane)
+- [x] K1: panika BorrowMutError — import/eksport (modalny dialog rfd kręci
+  zagnieżdżoną pętlę zdarzeń, w której tick pompy agenta robił drugie
+  borrow_mut) — ścieżka z dialogu pobierana PRZED pożyczeniem VM (poza `wire!`).
+- [x] HTTP timeout: jawny 300 s request + 15 s connect (było domyślne 30 s
+  reqwest → zrywało dłuższe odpowiedzi LLM bez streamingu).
+- [x] Pompa odświeża UI tylko po realnej pracy (did_work/done) — nie 25×/s.
+- [x] compact_history wpięte w ścieżkę desktop (chat_history kompaktuje przy
+  >100k tok) — domyka dług v1 #2 i E6/W5.
+- N (niekryt.): MAX_ITERATIONS ciche wyczerpanie (znacznik + komunikat); usage
+  gubione w gałęzi Err(AgentError) (zaniża koszt); persystencja ustawień AI/
+  klucza (Keychain jak v1); `AutoAuthorizer` + puste approved_roots auto-
+  zatwierdza pierwszą ścieżkę (zasilać roots z sesji); literał „[N wyników]" poza
+  i18n; binding cfg-endpoint zrywa się po edycji.
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.

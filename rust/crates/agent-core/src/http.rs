@@ -24,11 +24,18 @@ pub struct HttpLlmClient {
 impl HttpLlmClient {
     /// Tworzy klienta (konfiguracja normalizowana — endpoint/klucz/model).
     pub fn new(config: AgentConfig, system: impl Into<String>, variant: Variant) -> Self {
+        // Hojny timeout żądania: odpowiedzi LLM (bez streamingu — dług #5) potrafią
+        // przekroczyć domyślne 30 s reqwest i zerwać przebieg (review E7-parytet).
+        let http = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .unwrap_or_default();
         Self {
             config: config.normalized(),
             system: system.into(),
             variant,
-            http: reqwest::blocking::Client::new(),
+            http,
         }
     }
 }

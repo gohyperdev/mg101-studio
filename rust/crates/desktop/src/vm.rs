@@ -8,7 +8,7 @@
 //! metody.
 
 use mg101_agent_core::{
-    default_pricing, pricing_for, AgentConfig, ChatMessage, Provider, Role, Usage,
+    compact_history, default_pricing, pricing_for, AgentConfig, ChatMessage, Provider, Role, Usage,
 };
 use mg101_commands::{Command, TargetRef};
 use mg101_library::{LibraryStore, PatchOrigin};
@@ -16,6 +16,10 @@ use mg101_studio::{ExecError, Studio};
 use serde_json::Value;
 
 use crate::i18n::{tr, Lang};
+
+/// Próg tokenów, powyżej którego historia jest kompaktowana przed wysłaniem
+/// (auto-kompakcja kontekstu — dług v1 #2).
+const MAX_CONTEXT_TOKENS: usize = 100_000;
 
 /// Wiersz rozmowy agenta do wyświetlenia (rola + tekst; wywołania narzędzi
 /// pokazywane jako skrót).
@@ -145,8 +149,10 @@ impl<S: LibraryStore> ViewModel<S> {
         self.agent_config.is_configured()
     }
 
-    /// Pełna historia rozmowy (kopia dla wątku agenta).
-    pub fn chat_history(&self) -> Vec<ChatMessage> {
+    /// Historia rozmowy dla przebiegu agenta — **auto-kompakcja** przy dużym
+    /// kontekście (dług v1 #2; wpięcie E6/W5), potem kopia dla wątku.
+    pub fn chat_history(&mut self) -> Vec<ChatMessage> {
+        compact_history(&mut self.chat, MAX_CONTEXT_TOKENS);
         self.chat.clone()
     }
 

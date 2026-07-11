@@ -284,23 +284,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wire!(on_dismiss_error, |vm| {
         vm.clear_error();
     });
-    wire!(on_import, |vm| {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("MG-101 patch", &["mg101patch"])
-            .pick_file()
-        {
-            vm.import(&path.to_string_lossy());
-        }
-    });
-    wire!(on_export_patch, |vm, id, rev| {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("MG-101 patch", &["mg101patch"])
-            .set_file_name("patch.mg101patch")
-            .save_file()
-        {
-            vm.export(&id, rev as i64, &path.to_string_lossy());
-        }
-    });
+    // Import/eksport: modalny dialog `rfd` kręci ZAGNIEŻDŻONĄ pętlę zdarzeń UI,
+    // w której może odpalić tick pompy agenta. Dlatego ścieżkę pobieramy PRZED
+    // pożyczeniem VM — inaczej pompa zrobiłaby drugie `borrow_mut` i panika
+    // (review E7-parytet/K1). `wire!` tu nieużywane (pożycza VM zbyt wcześnie).
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        ui.on_import(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let picked = rfd::FileDialog::new()
+                .add_filter("MG-101 patch", &["mg101patch"])
+                .pick_file();
+            if let Some(path) = picked {
+                vmc.borrow_mut().import(&path.to_string_lossy());
+            }
+            refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        ui.on_export_patch(move |id, rev| {
+            let Some(ui) = uw.upgrade() else { return };
+            let picked = rfd::FileDialog::new()
+                .add_filter("MG-101 patch", &["mg101patch"])
+                .set_file_name("patch.mg101patch")
+                .save_file();
+            if let Some(path) = picked {
+                vmc.borrow_mut()
+                    .export(&id, rev as i64, &path.to_string_lossy());
+            }
+            refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
     wire!(on_switch_model, |vm, id, rev, block, idx| {
         let opts = vm.models(&block);
         if let Some(opt) = opts.get(idx as usize) {
@@ -390,6 +407,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             let mut done = false;
+            let mut did_work = false;
             {
                 let mut vm = vmc.borrow_mut();
                 let guard = slot.borrow();
@@ -398,6 +416,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     while let Some(cmd) = r.try_tool_request() {
                         let res = vm.execute_tool(&cmd);
                         r.send_tool_result(res);
+                        did_work = true;
                     }
                     // Zdarzenia końcowe.
                     while let Some(ev) = r.try_event() {
@@ -418,7 +437,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 *slot.borrow_mut() = None;
                 ui.set_agent_busy(false);
             }
-            refresh(&ui, &mut vmc.borrow_mut());
+            // Odśwież tylko po realnej pracy — nie przebudowuj UI 25×/s bez potrzeby.
+            if did_work || done {
+                refresh(&ui, &mut vmc.borrow_mut());
+            }
         });
     }
 
