@@ -802,11 +802,14 @@ name = "mg101-desktop"
 version = "0.1.0"
 dependencies = [
  "mg101-agent-core",
+ "mg101-commands",
  "mg101-core",
  "mg101-device-link",
  "mg101-library",
  "mg101-pack-nux-mg101",
+ "mg101-studio",
  "mg101-transfer-engine",
+ "serde_json",
 ]
 
 [[package]]
