@@ -11,6 +11,15 @@ mg101-commands = { path = "../commands" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Transport HTTP (natywny; wasm użyje fetch/innego klienta). rustls zamiast
+# natywnego TLS — bez zależności systemowych, spójne na macOS/Windows/Linux.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls",
+] }
+
 [lib]
 name = "mg101_agent_core"
 path = "src/lib.rs"

@@ -10,6 +10,8 @@
 mod compact;
 mod config;
 mod cost;
+#[cfg(not(target_arch = "wasm32"))]
+mod http;
 mod run;
 mod types;
 mod wire;
@@ -17,6 +19,8 @@ mod wire;
 pub use compact::{compact_history, estimate_tokens};
 pub use config::{is_path_approved, normalize_endpoint, AgentConfig, Provider};
 pub use cost::{default_pricing, pricing_for, ModelPricing};
+#[cfg(not(target_arch = "wasm32"))]
+pub use http::HttpLlmClient;
 pub use run::{run, AgentError, Authorizer, LlmClient, RunOutcome, ToolExecutor, MAX_ITERATIONS};
 pub use types::{ChatMessage, LlmResponse, Role, ToolCall, ToolResult, Usage};
 pub use wire::{
