@@ -27,3 +27,24 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Format check
         run: cargo fmt --all -- --check
+
+  wasm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip1
+      - name: Build rdzeń + pack → wasm32 (dowód #7)
+        run: |
+          cargo build -p mg101-core --target wasm32-unknown-unknown
+          cargo build -p mg101-pack-nux-mg101 --target wasm32-unknown-unknown
+      - name: Install wasmtime
+        run: curl -sSf https://wasmtime.dev/install.sh | bash
+      - name: Kodek round-trip 1:1 w WASM
+        run: |
+          cargo build -p mg101-pack-nux-mg101 --example wasm_roundtrip --target wasm32-wasip1
+          ~/.wasmtime/bin/wasmtime run target/wasm32-wasip1/debug/examples/wasm_roundtrip.wasm
