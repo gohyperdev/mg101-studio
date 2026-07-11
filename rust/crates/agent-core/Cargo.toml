@@ -1,0 +1,13 @@
+[package]
+name = "mg101-agent-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Rdzen agentowy: petla tool-calling, providerzy Anthropic/OpenAI, autoryzacje, sesje, liczenie kosztu (ADR-0001). E6.
+[dependencies]
+mg101-core = { path = "../core" }
+
+[lib]
+name = "mg101_agent_core"
+path = "src/lib.rs"

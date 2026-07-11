@@ -1,0 +1,14 @@
+[package]
+name = "mg101-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Serwer MCP (rmcp): stdio + Streamable HTTP na localhost; komendy z rejestru z anotacjami. E6.
+[dependencies]
+mg101-core = { path = "../core" }
+mg101-agent-core = { path = "../agent-core" }
+
+[lib]
+name = "mg101_mcp"
+path = "src/lib.rs"

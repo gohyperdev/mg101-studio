@@ -1,0 +1,15 @@
+[package]
+name = "mg101-pack-nux-mg101"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Device Pack MG-101: profile (dane) + codec (189B rekord <-> kanonik <-> .mg101patch) + protocol (SysEx). Round-trip 1:1 w E1/E2.
+[dependencies]
+mg101-core = { path = "../core" }
+mg101-device-pack-api = { path = "../device-pack-api" }
+mg101-device-link = { path = "../device-link" }
+
+[lib]
+name = "mg101_pack_nux_mg101"
+path = "src/lib.rs"

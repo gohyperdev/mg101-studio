@@ -1,0 +1,19 @@
+[package]
+name = "mg101-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Powloka desktop (macOS + Windows) — UI w Slint (natywny Rust), wywolania rdzenia
+# natywnie. Slint dokladany w E7; na E0 binarka-szkielet spinajaca crate'y rdzenia.
+[dependencies]
+mg101-core = { path = "../core" }
+mg101-library = { path = "../library" }
+mg101-transfer-engine = { path = "../transfer-engine" }
+mg101-agent-core = { path = "../agent-core" }
+mg101-device-link = { path = "../device-link" }
+mg101-pack-nux-mg101 = { path = "../pack-nux-mg101" }
+
+[[bin]]
+name = "mg101-desktop"
+path = "src/main.rs"

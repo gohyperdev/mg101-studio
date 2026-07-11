@@ -1,0 +1,26 @@
+# Workspace przepisania MG101 Studio na Rust (ADR-0002 v2, /goal E0).
+# Rdzeń bezstanowy względem platformy + cienkie powłoki UI; jedna magistrala
+# komend dla UI (Slint), agenta, MCP i przyszłego weba.
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/device-pack-api",
+    "crates/device-link",
+    "crates/pack-nux-mg101",
+    "crates/library",
+    "crates/transfer-engine",
+    "crates/agent-core",
+    "crates/mcp",
+    "crates/desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/gohyperdev/mg101-studio"
+
+[workspace.dependencies]
+# Wspólne wersje zależności — dokładane w kolejnych epikach (serde, midir,
+# rusqlite, slint, rmcp itd.). Trzymane centralnie dla spójności.

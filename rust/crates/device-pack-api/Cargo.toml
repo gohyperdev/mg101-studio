@@ -1,0 +1,15 @@
+[package]
+name = "mg101-device-pack-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Kontrakt Device Packa: generyczna topologia pamięci (banki/sloty/limity)
+# oraz traity protokołu. Silnik biblioteki i transferu zależą WYŁĄCZNIE od tych
+# abstrakcji — nigdy od konkretnego urządzenia (ADR-0002, HLD §2).
+[dependencies]
+mg101-device-link = { path = "../device-link" }
+
+[lib]
+name = "mg101_device_pack_api"
+path = "src/lib.rs"

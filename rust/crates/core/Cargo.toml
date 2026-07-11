@@ -1,0 +1,14 @@
+[package]
+name = "mg101-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Model kanoniczny (patch → bloki → aktywny model → parametry z zakresami,
+# pola globalne, załączniki IR) + rewizje/WAL/diff. Pisane raz, przeciw modelowi
+# kanonicznemu; kompilowalne natywnie i do wasm32 (ADR-0002).
+[dependencies]
+
+[lib]
+name = "mg101_core"
+path = "src/lib.rs"
