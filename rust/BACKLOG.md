@@ -126,6 +126,33 @@
   session_inverses (wszystkie dangling vs ostatnia linia v1) + port recovery
   slotów; obie z E5-W3.
 
+## Z review E6.3 (MCP rmcp — naprawione lub zaplanowane)
+- [x] K1: `write_record` atomowy + bez nadpisania (temp+`sync_all`+`hard_link`,
+  który atomowo zawodzi gdy cel istnieje) — było `exists()`+`fs::write` z
+  wyścigiem TOCTOU (ciche nadpisanie cudzego patcha) i obcięciem pliku przy
+  awarii. Parytet `PatchFileWriter.writeNew`. +test (brak wycieku tmp, input
+  nietknięty, odrzucony zapis nie zmienia istniejącego output).
+- [x] N3: `idempotent_hint: Some(false)` w anotacjach MCP (parytet v1).
+- N1: dowolne ścieżki input/output w trybie plikowym — zamierzone (parytet v1,
+  serwer stdio lokalny za zgodą klienta). Rozważyć opcjonalny root-sandbox
+  (env/flaga) + doprecyzować model zaufania w doc/instructions. `open_world_hint`
+  dla mutacji jest `false` (bo `Kind::Write`) mimo dowolnego FS — wierny v1, ale
+  semantycznie mylący; przemyśleć z sandboxem.
+- N2: nieznane narzędzie/zły argument → błąd protokołu `invalid_params` (v1
+  zwracał tool-error `isError=true`, pozwalając LLM się poprawić). Świadome,
+  zgodniejsze ze spec MCP; rozważyć `BadArgument` jako tool-error. Odnotować w ADR.
+- N4: `inspect` zwarty JSON (v1 prettyPrinted+sortedKeys). Klucze sortowane
+  (BTreeMap), treść równoważna; `to_string_pretty` jeśli snapshot-parytet.
+- N5: `ExecError::Unsupported` jako worek na I/O — dodać wariant `Io`/`Exists`
+  (lepsze komunikaty, dopasowanie w testach zamiast po treści stringa).
+- N6: `is_mcp_tool` to drugie źródło prawdy obok rejestru E3 — nowe narzędzie
+  plikowe nie trafi do MCP bez edycji listy. Dodać znacznik „file-capable" w
+  `ToolDefinition`/`Kind` albo test krzyżowy rejestr↔filtr.
+- N7: `dispatch` (sync FS) w `async call_tool` blokuje wątek executor-a przy
+  równoległych żądaniach — `tokio::task::spawn_blocking` (profil/katalog w `Arc`).
+- N8: testy — brak dla `set_ir`/`clear_ir` na ścieżce plikowej (WAV); `mcp`
+  `tmpdir()` bez tagu per test (dziś jeden konsument, mina na przyszłość).
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.

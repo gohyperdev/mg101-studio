@@ -12,6 +12,8 @@ use crate::ExecError;
 use mg101_commands::{Command, TargetRef};
 use mg101_core::{DeviceProfile, EffectCatalog, PatchRecord};
 use serde_json::{json, Value};
+use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn file_target(target: &TargetRef) -> Result<(&str, &str), ExecError> {
     match target {
@@ -28,15 +30,51 @@ fn load_record<'p>(path: &str, profile: &'p DeviceProfile) -> Result<PatchRecord
     Ok(PatchRecord::new(data, profile)?)
 }
 
-/// Zapisuje rekord do `output`; odmawia nadpisania istniejącego pliku (jak v1).
+/// Zapisuje rekord do `output` **atomowo** i **bez nadpisania** (parytet
+/// `PatchFileWriter.writeNew` z v1; naprawa review E6.3/K1).
+///
+/// Wcześniejsze `exists()` + `fs::write` miało wyścig TOCTOU (równoległe
+/// wywołania MCP mogły po cichu nadpisać cudzy patch — naruszenie "bajtów
+/// świętych") i zostawiało obcięty plik przy awarii w trakcie zapisu. Teraz:
+/// pełny zapis do pliku tymczasowego w katalogu docelowym (+`sync_all`), po czym
+/// `hard_link` na ścieżkę docelową — link **atomowo zawodzi, gdy cel istnieje**,
+/// więc kontrakt „nie nadpisuj" jest egzekwowany bez okna wyścigu, a plik
+/// docelowy nigdy nie jest widoczny w stanie częściowym. Plik wejściowy nie jest
+/// dotykany.
 fn write_record(record: &PatchRecord, output: &str) -> Result<(), ExecError> {
-    if std::path::Path::new(output).exists() {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let out_path = std::path::Path::new(output);
+    // Wczesne odrzucenie istniejącego celu (jasny komunikat); ostateczny gwarant
+    // to i tak atomowy hard_link poniżej.
+    if out_path.exists() {
         return Err(ExecError::Unsupported(format!(
             "plik wyjściowy już istnieje: {output}"
         )));
     }
-    std::fs::write(output, record.data())
-        .map_err(|e| ExecError::Unsupported(format!("zapis '{output}': {e}")))
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = out_path.with_extension(format!("mg101patch.tmp.{}.{seq}", std::process::id()));
+
+    let write_tmp = || -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(record.data())?;
+        f.sync_all()
+    };
+    if let Err(e) = write_tmp() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(ExecError::Unsupported(format!("zapis '{output}': {e}")));
+    }
+
+    // Atomowe „utwórz, jeśli nie istnieje": hard_link zawodzi z AlreadyExists,
+    // gdy cel powstał w międzyczasie (domknięcie TOCTOU).
+    let link_res = std::fs::hard_link(&tmp, out_path);
+    let _ = std::fs::remove_file(&tmp);
+    link_res.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            ExecError::Unsupported(format!("plik wyjściowy już istnieje: {output}"))
+        } else {
+            ExecError::Unsupported(format!("zapis '{output}': {e}"))
+        }
+    })
 }
 
 /// Wykonuje komendę plikową i zwraca komunikat tekstowy (jak MCP v1).
@@ -290,6 +328,53 @@ mod tests {
         };
         let err = execute_file_command(&profile, &catalog, &cmd).unwrap_err();
         assert!(matches!(err, ExecError::Unsupported(m) if m.contains("już istnieje")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_tmp_and_preserves_existing_output() {
+        let (profile, catalog) = fixture();
+        let dir = tmpdir("atomic");
+        let input = dir.join("in3.mg101patch");
+        let output = dir.join("out3.mg101patch");
+        let _ = std::fs::remove_file(&output);
+        std::fs::write(&input, vec![0u8; profile.record_size]).unwrap();
+        let input_before = std::fs::read(&input).unwrap();
+
+        let cmd = |bpm: i64| Command::SetBpm {
+            target: TargetRef::File {
+                input: input.to_str().unwrap().into(),
+                output: output.to_str().unwrap().into(),
+            },
+            bpm,
+        };
+        // Pierwszy zapis tworzy output; plik wejściowy nietknięty.
+        execute_file_command(&profile, &catalog, &cmd(77)).unwrap();
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            input_before,
+            "input dotknięty"
+        );
+        let output_after_first = std::fs::read(&output).unwrap();
+
+        // Drugi zapis na istniejący output jest odrzucony — istniejący plik bez zmian.
+        assert!(execute_file_command(&profile, &catalog, &cmd(11)).is_err());
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            output_after_first,
+            "odrzucony zapis zmienił istniejący output"
+        );
+
+        // Żaden plik tymczasowy nie został (sukces i porażka po sobie sprzątają).
+        let leftover: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "wyciek pliku tymczasowego: {leftover:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

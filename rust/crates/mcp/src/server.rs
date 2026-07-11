@@ -43,6 +43,8 @@ fn annotations(kind: Kind) -> ToolAnnotations {
         read_only_hint: Some(kind == Kind::Read),
         destructive_hint: Some(kind == Kind::Destructive),
         open_world_hint: Some(kind == Kind::Filesystem),
+        // v1 ustawiał jawnie idempotentHint:false (main.swift) — parytet.
+        idempotent_hint: Some(false),
         ..Default::default()
     }
 }
