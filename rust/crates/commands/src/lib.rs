@@ -7,6 +7,9 @@
 
 use serde_json::{Map, Value};
 
+pub mod tool_defs;
+pub use tool_defs::{ToolDefinition, Variant};
+
 /// Identyfikator patcha (UUID lub `factory-NN`).
 pub type PatchId = String;
 
