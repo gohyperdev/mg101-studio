@@ -393,6 +393,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     detect_device(&ui);
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
     let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
+    // Ostatni zrzut zdekodowany do rekordów plikowych (8402 B × zajęte sloty),
+    // gotowy do importu do Biblioteki. Pusty, dopóki nie ma zrzutu.
+    let last_dump: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -523,6 +526,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Import zrzutu do Biblioteki (W2): zdekodowane rekordy plikowe → plik tymczasowy
+    // → istniejąca ścieżka importu (pełne parametry, edytowalne). Poza `wire!` — bajty
+    // pobieramy przed pożyczeniem VM, spójnie z importem/eksportem plikowym.
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let ldump = last_dump.clone();
+        let dir = data_dir.clone();
+        ui.on_import_dump(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let bytes = ldump.borrow().clone();
+            if bytes.is_empty() {
+                return;
+            }
+            let path = dir.join("device-dump.mg101patch");
+            let n = match std::fs::write(&path, &bytes) {
+                Ok(()) => vmc.borrow_mut().import(&path.to_string_lossy()),
+                Err(e) => {
+                    vmc.borrow_mut().report_error(format!("zapis zrzutu: {e}"));
+                    0
+                }
+            };
+            ui.set_dump_status(format!("zaimportowano {n} patchy do Biblioteki").into());
+            refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
+
     // Zmiana języka: przelicz etykiety + odśwież.
     {
         let uw = ui.as_weak();
@@ -624,6 +654,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let vmc = vm.clone();
         let dslot = dumper.clone();
         let krx = key_rx.clone();
+        let ldump = last_dump.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
@@ -676,11 +707,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_dump_status(format!("zrzut {done}/{total} slotów…").into());
                     }
                     DumpMsg::Done { user, factory } => {
+                        // Zdekoduj zajęte sloty do rekordów plikowych (8402 B) — gotowe
+                        // do importu z pełnymi parametrami (kodek wire→plik W2).
+                        let mut import_bytes = Vec::new();
+                        for s in user.iter().chain(factory.iter()).filter(|s| s.occupied()) {
+                            if let Ok(rec) = mg101_pack_nux_mg101::wire::decode_slot(&s.blob) {
+                                import_bytes.extend_from_slice(&rec);
+                            }
+                        }
+                        *ldump.borrow_mut() = import_bytes;
+
                         let to_rows = |dump: Vec<mg101_desktop::device::SlotDump>| {
                             dump.into_iter()
                                 .map(|s| SlotRow {
                                     index: s.index,
-                                    name: String::new(), // nazwa wire nieodczytana (BACKLOG W2)
+                                    // Nazwa dekodowana z rekordu wire (kodek W2).
+                                    name: mg101_pack_nux_mg101::wire::decode_name(&s.blob),
                                     occupied: s.occupied(),
                                     writable: s.bank == "user",
                                 })
@@ -690,6 +732,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         vmc.borrow_mut()
                             .set_device_banks(to_rows(user), to_rows(factory));
                         ui.set_dump_status(format!("zrzucono User {nu} + Factory {nf}").into());
+                        ui.set_dump_ready(!ldump.borrow().is_empty());
                         finished = true;
                     }
                     DumpMsg::Error(e) => {

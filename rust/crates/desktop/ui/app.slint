@@ -93,6 +93,7 @@ export component AppWindow inherits Window {
     in property <string> device-label;     // np. "NUX MG-101" lub "brak urządzenia"
     in property <bool> device-connected;
     in property <bool> dump-busy;
+    in property <bool> dump-ready;         // jest zrzut gotowy do importu
     in property <string> dump-status;      // postęp/komunikat zrzutu
 
     // Agent (rozmowa + rozliczenie sesji)
@@ -157,6 +158,7 @@ export component AppWindow inherits Window {
     callback send-message(string);                     // treść wiadomości do agenta
     callback save-settings(int, string, string, string); // provider, endpoint, model, key
     callback connect-dump();                           // W2: połącz i zrzuć banki
+    callback import-dump();                             // W2: import zrzutu do Biblioteki
 
     HorizontalBox {
         padding: 0px;
@@ -251,6 +253,11 @@ export component AppWindow inherits Window {
                                 text: "Połącz i zrzuć";
                                 enabled: root.device-connected && !root.dump-busy;
                                 clicked => { root.connect-dump(); }
+                            }
+                            Button {
+                                text: "Import → Biblioteka";
+                                enabled: root.dump-ready && !root.dump-busy;
+                                clicked => { root.import-dump(); }
                             }
                         }
                         if root.dump-status != "": Text {

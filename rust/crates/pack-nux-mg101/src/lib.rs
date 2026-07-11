@@ -5,6 +5,7 @@
 //! Protokół SysEx (odczyt/zapis na żywo) w module [`protocol`].
 
 pub mod protocol;
+pub mod wire;
 pub use protocol::Mg101Protocol;
 
 use mg101_core::{DeviceProfile, EffectCatalog, ProfileError};
