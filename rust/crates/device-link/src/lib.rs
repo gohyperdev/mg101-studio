@@ -81,13 +81,30 @@ impl SysexAssembler {
     pub fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         for &b in bytes {
+            // System realtime (F8..=FF): jednobajtowy, może wystąpić WSZĘDZIE —
+            // także w środku SysEx czy komunikatu running-status. Przepuszczamy
+            // obok, bez naruszania bufora SysEx ani `pending`.
+            if (0xF8..=0xFF).contains(&b) {
+                out.push(vec![b]);
+                continue;
+            }
             if self.in_sysex {
-                self.sysex.push(b);
                 if b == 0xF7 {
+                    self.sysex.push(b);
                     out.push(std::mem::take(&mut self.sysex));
                     self.in_sysex = false;
+                    continue;
                 }
-                continue;
+                if b >= 0x80 {
+                    // Nowy bajt statusu w środku SysEx → ramka ucięta. Porzucamy
+                    // niekompletny SysEx (ochrona przed niekończącym się buforem)
+                    // i przetwarzamy `b` jako początek nowego komunikatu poniżej.
+                    self.sysex.clear();
+                    self.in_sysex = false;
+                } else {
+                    self.sysex.push(b);
+                    continue;
+                }
             }
             if b == 0xF0 {
                 self.sysex.clear();
@@ -121,6 +138,119 @@ impl SysexAssembler {
             }
         }
         out
+    }
+}
+
+/// Testowy dubler łącza: rejestruje wysłane komunikaty i generuje odpowiedzi
+/// przez zadany domykający się responder (symulacja urządzenia). Używany w
+/// testach protokołu (np. `pack-nux-mg101`) — nie wymaga sprzętu.
+pub struct MockLink {
+    /// Komunikaty wysłane przez hosta (w kolejności).
+    pub sent: Vec<Vec<u8>>,
+    inbox: std::collections::VecDeque<Vec<u8>>,
+    #[allow(clippy::type_complexity)]
+    responder: Box<dyn FnMut(&[u8]) -> Vec<Vec<u8>> + Send>,
+}
+
+impl MockLink {
+    /// Nowy dubler z responderem `wysłane → odpowiedzi urządzenia`.
+    pub fn new(responder: impl FnMut(&[u8]) -> Vec<Vec<u8>> + Send + 'static) -> Self {
+        Self {
+            sent: Vec::new(),
+            inbox: std::collections::VecDeque::new(),
+            responder: Box::new(responder),
+        }
+    }
+}
+
+impl DeviceLink for MockLink {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), LinkError> {
+        self.sent.push(bytes.to_vec());
+        for msg in (self.responder)(bytes) {
+            self.inbox.push_back(msg);
+        }
+        Ok(())
+    }
+    fn poll(&mut self) -> Vec<Vec<u8>> {
+        self.inbox.drain(..).collect()
+    }
+}
+
+/// Realny backend MIDI oparty o `midir` (macOS/Windows/Linux). Wykluczony z
+/// wasm32 (tam transport dostarcza WebMIDI). Wymaga fizycznego urządzenia.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct MidirLink {
+    out: midir::MidiOutputConnection,
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    // Połączenie wejściowe trzymane przy życiu (callback aktywny póki żyje).
+    _input: midir::MidiInputConnection<()>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl MidirLink {
+    /// Otwiera pierwszy port wejścia i wyjścia, którego nazwa zawiera `needle`.
+    pub fn open(needle: &str) -> Result<Self, LinkError> {
+        use midir::{Ignore, MidiInput, MidiOutput};
+
+        let mut input =
+            MidiInput::new("mg101-in").map_err(|e| LinkError::Transport(e.to_string()))?;
+        input.ignore(Ignore::None); // NIE filtruj SysEx.
+        let in_port = input
+            .ports()
+            .into_iter()
+            .find(|p| {
+                input
+                    .port_name(p)
+                    .map(|n| n.contains(needle))
+                    .unwrap_or(false)
+            })
+            .ok_or(LinkError::NotConnected)?;
+
+        let output =
+            MidiOutput::new("mg101-out").map_err(|e| LinkError::Transport(e.to_string()))?;
+        let out_port = output
+            .ports()
+            .into_iter()
+            .find(|p| {
+                output
+                    .port_name(p)
+                    .map(|n| n.contains(needle))
+                    .unwrap_or(false)
+            })
+            .ok_or(LinkError::NotConnected)?;
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let input_conn = input
+            .connect(
+                &in_port,
+                "mg101-in",
+                move |_stamp, message, _| {
+                    let _ = tx.send(message.to_vec());
+                },
+                (),
+            )
+            .map_err(|e| LinkError::Transport(e.to_string()))?;
+        let out = output
+            .connect(&out_port, "mg101-out")
+            .map_err(|e| LinkError::Transport(e.to_string()))?;
+
+        Ok(Self {
+            out,
+            rx,
+            _input: input_conn,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl DeviceLink for MidirLink {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), LinkError> {
+        self.out
+            .send(bytes)
+            .map_err(|e| LinkError::Transport(e.to_string()))
+    }
+    fn poll(&mut self) -> Vec<Vec<u8>> {
+        self.rx.try_iter().collect()
     }
 }
 
@@ -163,5 +293,45 @@ mod tests {
         assert_eq!(message_len(0xC0), 2);
         assert_eq!(message_len(0xF2), 3);
         assert_eq!(message_len(0xF8), 1);
+    }
+
+    #[test]
+    fn realtime_byte_passes_through_inside_sysex() {
+        // Clock (F8) w środku SysEx: przepuszczony obok, SysEx nienaruszony.
+        let mut a = SysexAssembler::new();
+        let out = a.push(&[0xF0, 0x43, 0xF8, 0x58, 0x70, 0xF7]);
+        assert_eq!(out, vec![vec![0xF8], vec![0xF0, 0x43, 0x58, 0x70, 0xF7]]);
+    }
+
+    #[test]
+    fn realtime_does_not_break_running_status_cc() {
+        // F8 między bajtami CC nie kasuje częściowego komunikatu.
+        let mut a = SysexAssembler::new();
+        let out = a.push(&[0xB0, 44, 0xF8, 100]);
+        assert_eq!(out, vec![vec![0xF8], vec![0xB0, 44, 100]]);
+    }
+
+    #[test]
+    fn status_byte_aborts_incomplete_sysex() {
+        // Nowy status (nie F7/realtime) w środku SysEx przerywa i zaczyna nowy
+        // komunikat — brak niekończącego się bufora.
+        let mut a = SysexAssembler::new();
+        let out = a.push(&[0xF0, 0x43, 0x58, 0xB0, 44, 100]);
+        assert_eq!(out, vec![vec![0xB0, 44, 100]]);
+        // Kolejny poprawny SysEx po przerwaniu składa się normalnie.
+        let out2 = a.push(&[0xF0, 0x11, 0xF7]);
+        assert_eq!(out2, vec![vec![0xF0, 0x11, 0xF7]]);
+    }
+
+    #[test]
+    fn mock_link_records_sent_and_replays_responses() {
+        let mut link = MockLink::new(|sent| {
+            // Odpowiada echem z dołączonym znacznikiem.
+            vec![[sent, &[0xEE]].concat()]
+        });
+        link.send(&[0x01, 0x02]).unwrap();
+        assert_eq!(link.sent, vec![vec![0x01, 0x02]]);
+        assert_eq!(link.poll(), vec![vec![0x01, 0x02, 0xEE]]);
+        assert!(link.poll().is_empty());
     }
 }

@@ -38,6 +38,8 @@ pub struct BankInfo {
     pub writable: bool,
     /// Czy sloty można przestawiać (reorder).
     pub reorderable: bool,
+    /// Czy slot można wyczyścić/skasować.
+    pub erasable: bool,
 }
 
 /// Limity zapisu deklarowane przez profil.
@@ -45,6 +47,8 @@ pub struct BankInfo {
 pub struct StorageLimits {
     /// Maksymalna liczba zapisywalnych slotów łącznie (None = bez limitu).
     pub max_writable_total: Option<u16>,
+    /// Limit per bank (id banku → maks. liczba zapisywalnych slotów).
+    pub per_bank: std::collections::BTreeMap<BankId, u16>,
 }
 
 /// Mapa zajętości slotów (do wyliczania wolnych miejsc przy transferze).
@@ -102,6 +106,25 @@ pub trait DeviceProtocol {
         addr: &SlotAddr,
         blob: &[u8],
     ) -> Result<(), ProtocolError>;
+    /// Odczyt całego banku (bulk dump). Domyślnie sekwencyjnie przez `read_slot`.
+    fn read_bank(
+        &self,
+        link: &mut dyn DeviceLink,
+        bank: &BankId,
+        info: &BankInfo,
+    ) -> Result<Vec<Vec<u8>>, ProtocolError> {
+        (0..info.slots)
+            .map(|i| {
+                self.read_slot(
+                    link,
+                    &SlotAddr {
+                        bank: bank.clone(),
+                        index: info.index_base + i,
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 /// Błąd protokołu urządzenia.
@@ -133,6 +156,7 @@ mod tests {
                         index_base: 0,
                         writable: true,
                         reorderable: true,
+                        erasable: false,
                     },
                     BankInfo {
                         id: "factory".into(),
@@ -141,6 +165,7 @@ mod tests {
                         index_base: 0,
                         writable: false,
                         reorderable: false,
+                        erasable: false,
                     },
                 ]
             })
@@ -149,6 +174,7 @@ mod tests {
             static L: std::sync::OnceLock<StorageLimits> = std::sync::OnceLock::new();
             L.get_or_init(|| StorageLimits {
                 max_writable_total: Some(36),
+                per_bank: std::collections::BTreeMap::from([("user".to_string(), 36u16)]),
             })
         }
     }

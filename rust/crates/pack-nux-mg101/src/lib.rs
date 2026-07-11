@@ -2,7 +2,10 @@
 //!
 //! Profil i katalog są DANYMI osadzonymi w pakiecie (te same pliki co v1 Swift).
 //! Codec kontenera `.mg101patch` operuje na modelu kanonicznym z `mg101-core`.
-//! Protokół SysEx (odczyt/zapis na żywo) dochodzi w E2.
+//! Protokół SysEx (odczyt/zapis na żywo) w module [`protocol`].
+
+pub mod protocol;
+pub use protocol::Mg101Protocol;
 
 use mg101_core::{DeviceProfile, EffectCatalog, ProfileError};
 
