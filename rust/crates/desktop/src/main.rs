@@ -126,6 +126,7 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                     unit: p.unit.clone().into(),
                     midi_cc: p.midi_cc as i32,
                     confirmed: p.confirmed,
+                    display: p.display.clone().into(),
                 })
                 .collect();
             let opts = vm.models(&b.block);

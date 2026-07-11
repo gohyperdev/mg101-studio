@@ -313,16 +313,19 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                         m.parameters
                             .iter()
                             .map(|param| {
+                                let raw = rec.value_at(param.file_offset);
                                 json!({
                                     "name": param.name,
                                     "label": param.label(),
-                                    "value": rec.value_at(param.file_offset),
+                                    "value": raw,
                                     "minimum": param.minimum(),
                                     "maximum": param.maximum(),
                                     "control": param.control().as_str(),
                                     "unit": param.unit,
                                     "midi_cc": param.midi_cc,
                                     "confirmed": param.is_confirmed(),
+                                    // Wartość fizyczna (dB/Hz), gdy znany wzór (W3 uzupełnienie).
+                                    "display": param.display_value(raw),
                                 })
                             })
                             .collect()

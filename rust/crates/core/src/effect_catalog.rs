@@ -28,6 +28,9 @@ pub struct Parameter {
     /// Typy kontrolek UI wg QuickTone (2=suwak, 7=przełącznik 0/1, …).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ui_element_types: Vec<i64>,
+    /// Wzór przeliczenia wartości surowej (0..100) na fizyczną (dB/Hz), jeśli znany.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_transform: Option<String>,
 }
 
 /// Typ kontrolki UI dla parametru — sterowany danymi katalogu (ADR-0002).
@@ -83,6 +86,25 @@ impl Parameter {
     pub fn is_confirmed(&self) -> bool {
         let ok = |c: &Option<String>| c.as_deref().map(|s| s == "confirmed").unwrap_or(true);
         ok(&self.semantic_confidence) && ok(&self.storage_confidence)
+    }
+
+    /// Wartość fizyczna dla `raw` (0..100) wg `display_transform`, sformatowana
+    /// z jednostką (np. `-3.6 dB`, `245 Hz`). `None`, gdy brak/nieznany wzór.
+    ///
+    /// Wzory potwierdzone z QuickTone (`cabinet_display_tables`): dB liniowe,
+    /// low/high-cut wykładnicze. Rozpoznawane po zawartości `display_transform`.
+    pub fn display_value(&self, raw: i64) -> Option<String> {
+        let t = self.display_transform.as_deref()?;
+        let r = raw as f64 / 100.0;
+        if t.contains("low_cut_table") {
+            Some(format!("{:.0} Hz", 20.0 * 50f64.powf(r)))
+        } else if t.contains("high_cut_table") {
+            Some(format!("{:.0} Hz", 5000.0 * 4f64.powf(r)))
+        } else if t == "raw / 100 * 24 - 12" {
+            Some(format!("{:+.1} dB", raw as f64 / 100.0 * 24.0 - 12.0))
+        } else {
+            None
+        }
     }
 }
 
@@ -158,6 +180,25 @@ mod tests {
         let slider =
             param(r#"{"name":"level","local_index":2,"file_offset":34,"raw_range":[0,100]}"#);
         assert_eq!(slider.control(), Control::Slider);
+    }
+
+    #[test]
+    fn display_value_computes_physical_units() {
+        let db = param(
+            r#"{"name":"level","local_index":0,"file_offset":80,"raw_range":[0,100],"unit":"dB","display_transform":"raw / 100 * 24 - 12"}"#,
+        );
+        assert_eq!(db.display_value(0).as_deref(), Some("-12.0 dB"));
+        assert_eq!(db.display_value(50).as_deref(), Some("+0.0 dB"));
+        assert_eq!(db.display_value(100).as_deref(), Some("+12.0 dB"));
+        let low = param(
+            r#"{"name":"low_cut","local_index":1,"file_offset":81,"raw_range":[0,100],"unit":"Hz","display_transform":"quicktone_low_cut_table[raw]"}"#,
+        );
+        assert_eq!(low.display_value(0).as_deref(), Some("20 Hz")); // endpoint dolny
+        assert_eq!(low.display_value(100).as_deref(), Some("1000 Hz")); // endpoint górny
+                                                                        // Brak wzoru → brak wartości fizycznej.
+        let plain =
+            param(r#"{"name":"gain","local_index":0,"file_offset":32,"raw_range":[0,100]}"#);
+        assert!(plain.display_value(50).is_none());
     }
 
     #[test]

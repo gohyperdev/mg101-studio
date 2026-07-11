@@ -230,6 +230,10 @@
 - E6: zdecydować, czy `mcp` to osobna binarka czy embed w desktop.
 
 ## W3 — parytet katalogu parametrów (follow-up)
+- [x] **Transformacja wartości do jednostek fizycznych** — ZROBIONE: `Parameter::display_value`
+  liczy dB (`raw/100*24-12`) oraz low/high-cut Hz (`20*50^(raw/100)`, `5000*4^(raw/100)`)
+  wg `cabinet_display_tables`; edytor pokazuje `+3.6 dB`/`245 Hz` zamiast surowej 0..100.
+  +test core. Uwaga historyczna poniżej:
 - **Transformacja wartości do jednostek fizycznych** — katalog niesie `display_transform`
   (81 param.: liniowe `raw/100*24-12` oraz tabele `quicktone_low_cut_table[raw]` /
   `high_cut` / `cabinet_display_tables`). UI pokazuje wartość SUROWĄ 0..100, a jednostkę

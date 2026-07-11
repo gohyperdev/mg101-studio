@@ -22,6 +22,7 @@ export struct ParamRowUi {
     unit: string,
     midi-cc: int, // -1 = nieznany
     confirmed: bool, // false = wartość/semantyka "inferred"
+    display: string, // wartość fizyczna (dB/Hz), pusta gdy brak wzoru
 }
 
 export struct BlockRowUi {
@@ -433,12 +434,11 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     Text {
-                                        width: 46px;
-                                        // Wartość SUROWA (0..100). Jednostka w podpowiedzi —
-                                        // przeliczenie do dB/Hz czeka na ewaluator wzorów (BACKLOG W3).
+                                        // Wartość: fizyczna (dB/Hz) gdy znany wzór, inaczej surowa 0..100.
+                                        width: 74px;
                                         text: p.control == "toggle"
                                             ? (p.value == 0 ? "OFF" : "ON")
-                                            : p.value;
+                                            : (p.display == "" ? p.value : p.display);
                                         color: white;
                                         vertical-alignment: center;
                                     }

@@ -76,6 +76,8 @@ pub struct ParamRow {
     pub midi_cc: i64,
     /// `false` = semantyka/zapis „inferred" (oznaczyć w UI).
     pub confirmed: bool,
+    /// Wartość fizyczna (np. `+3.6 dB`, `245 Hz`), pusta gdy brak wzoru.
+    pub display: String,
 }
 
 /// Blok w łańcuchu efektów (widok edytora).
@@ -743,6 +745,7 @@ fn block_from_json(v: &Value) -> BlockRow {
                         unit: s("unit"),
                         midi_cc: p.get("midi_cc").and_then(Value::as_i64).unwrap_or(-1),
                         confirmed: p.get("confirmed").and_then(Value::as_bool).unwrap_or(true),
+                        display: s("display"),
                     }
                 })
                 .collect()
