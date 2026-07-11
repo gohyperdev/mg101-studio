@@ -2,7 +2,7 @@
 //! wykrycie konfliktu na slocie (`expectedRevision`), rollback całej partii przy
 //! błędzie. Zależne tylko od traitów — testowane mockiem protokołu/transportu.
 
-use mg101_core::wal::{sha256_hex, EntryState, InverseOperation, JournalStore, TransactionEntry};
+use mg101_core::wal::{EntryState, InverseOperation, JournalStore, TransactionEntry};
 use mg101_device_link::DeviceLink;
 use mg101_device_pack_api::{DeviceProtocol, ProtocolError, SlotAddr};
 use mg101_library::{
@@ -33,7 +33,11 @@ pub enum ExecError {
     /// Patch z planu nie istnieje w Bibliotece.
     PatchMissing(String),
     /// Slot zmieniony poza aplikacją od ostatniego transferu (zapis wstrzymany).
-    Conflict { target: SlotAddr, applied: usize },
+    /// `rolled_back` = ile wcześniejszych zapisów partii cofnięto.
+    Conflict {
+        target: SlotAddr,
+        rolled_back: usize,
+    },
     /// Błąd protokołu urządzenia.
     Protocol(ProtocolError),
     /// Błąd dziennika WAL.
@@ -72,11 +76,13 @@ pub fn execute_push<S: LibraryStore, J: JournalStore>(
     let mut links: Vec<DeviceSlotLink> = Vec::new();
 
     for w in &plan.writes {
-        let patch = store
-            .get(&w.patch_id)
-            .ok_or_else(|| ExecError::PatchMissing(w.patch_id.clone()))?;
+        let Some(patch) = store.get(&w.patch_id) else {
+            rollback(ctx, &applied);
+            return Err(ExecError::PatchMissing(w.patch_id.clone()));
+        };
 
-        // Odczyt „przed" — hash bazowy i kontrola konfliktu.
+        // Odczyt „przed" — hash bazowy (biblioteczny exact_hash: jedna przestrzeń
+        // hashy, spójna z hash_at_transfer w linkach).
         let before = match ctx.protocol.read_slot(ctx.link, &w.target) {
             Ok(b) => b,
             Err(e) => {
@@ -84,15 +90,21 @@ pub fn execute_push<S: LibraryStore, J: JournalStore>(
                 return Err(ExecError::Protocol(e));
             }
         };
-        let before_hash = sha256_hex(&before);
+        let before_hash = exact_hash(&before);
 
-        // Konflikt: slot był powiązany z transferem, ale zmienił się poza aplikacją.
-        if let Some(prev) = store.link_for_slot(device_serial, &w.target) {
-            if prev.hash_at_transfer != before_hash {
+        // Kontrola konfliktu. Priorytet: jawny `expected_before_hash` z planu
+        // (egzekwowany dla KAŻDEGO slotu); w jego braku — dawny link provenance.
+        let expected = w.expected_before_hash.clone().or_else(|| {
+            store
+                .link_for_slot(device_serial, &w.target)
+                .map(|l| l.hash_at_transfer)
+        });
+        if let Some(exp) = expected {
+            if exp != before_hash {
                 rollback(ctx, &applied);
                 return Err(ExecError::Conflict {
                     target: w.target.clone(),
-                    applied: applied.len(),
+                    rolled_back: applied.len(),
                 });
             }
         }
@@ -114,24 +126,27 @@ pub fn execute_push<S: LibraryStore, J: JournalStore>(
             after_hash: patch.exact_hash.clone(),
             state: EntryState::Prepared,
         };
-        journal
-            .append(&entry)
-            .map_err(|e| ExecError::Wal(e.to_string()))?;
+        if let Err(e) = journal.append(&entry) {
+            rollback(ctx, &applied);
+            return Err(ExecError::Wal(e.to_string()));
+        }
 
         // Zapis slotu.
         if let Err(e) = ctx.protocol.write_slot(ctx.link, &w.target, &patch.blob) {
             rollback(ctx, &applied);
             return Err(ExecError::Protocol(e));
         }
-        applied.push((w.target.clone(), before));
+        applied.push((w.target.clone(), before)); // od teraz bieżący też podlega rollbackowi
 
-        // WAL: committed.
+        // WAL: committed. Błąd tu → rollback z bieżącym slotem włącznie.
         entry.state = EntryState::Committed;
-        journal
-            .append(&entry)
-            .map_err(|e| ExecError::Wal(e.to_string()))?;
+        if let Err(e) = journal.append(&entry) {
+            rollback(ctx, &applied);
+            return Err(ExecError::Wal(e.to_string()));
+        }
 
-        // Aktualizacja provenance.
+        // Aktualizacja provenance. Błąd → rollback z bieżącym slotem włącznie
+        // (bez linku stan sync byłby fałszywy).
         let link = DeviceSlotLink {
             device_serial: device_serial.to_string(),
             slot: w.target.clone(),
@@ -139,7 +154,10 @@ pub fn execute_push<S: LibraryStore, J: JournalStore>(
             hash_at_transfer: patch.exact_hash.clone(),
             transferred_at: now_ms,
         };
-        store.record_link(link.clone()).map_err(ExecError::Store)?;
+        if let Err(e) = store.record_link(link.clone()) {
+            rollback(ctx, &applied);
+            return Err(ExecError::Store(e));
+        }
         links.push(link);
     }
 
@@ -197,13 +215,19 @@ mod tests {
 
     // --- Dublury testowe ---
 
-    /// Dziennik WAL w pamięci.
+    /// Dziennik WAL w pamięci; opcjonalnie zawodzi na N-tym `append` (1-bazowo).
     #[derive(Default)]
     struct MemJournal {
         entries: RefCell<Vec<TransactionEntry>>,
+        fail_append_at: Option<usize>,
+        calls: RefCell<usize>,
     }
     impl JournalStore for MemJournal {
         fn append(&self, entry: &TransactionEntry) -> Result<(), WalError> {
+            *self.calls.borrow_mut() += 1;
+            if Some(*self.calls.borrow()) == self.fail_append_at {
+                return Err(WalError::Io("symulowany błąd dziennika".into()));
+            }
             self.entries.borrow_mut().push(entry.clone());
             Ok(())
         }
@@ -298,6 +322,7 @@ mod tests {
                         index: *idx,
                     },
                     overwrites: *ow,
+                    expected_before_hash: None,
                 })
                 .collect(),
         }
@@ -364,11 +389,97 @@ mod tests {
         let mut seq = 0;
         let err =
             execute_push(&plan, &mut ctx, &mut store, &journal, "SN1", 1, &mut seq).unwrap_err();
-        assert!(matches!(err, ExecError::Conflict { applied: 1, .. }));
+        assert!(matches!(err, ExecError::Conflict { rolled_back: 1, .. }));
         // Rollback: slot 0 przywrócony do stanu początkowego.
         assert_eq!(proto.read("user", 0), vec![9, 9]);
         // Slot 1 nie został tknięty.
         assert_eq!(proto.read("user", 1), vec![8, 8]);
+    }
+
+    #[test]
+    fn explicit_expected_hash_enables_acknowledged_overwrite() {
+        // K2: nadpisanie stanu DeviceModified. Slot ma [8,8]; link mówił [7,7,7]
+        // (rozjazd). Ustawiając expected_before_hash = bieżący hash [8,8], użytkownik
+        // POTWIERDZA nadpisanie — zapis się wykonuje (a nie wieczny konflikt).
+        let proto = MockProtocol::new();
+        proto.seed("user", 0, vec![8, 8]);
+        let mut link = dummy_link();
+        let mut store = MemoryStore::new();
+        store.add(lib_patch("p0", vec![1, 1, 1])).unwrap();
+        store
+            .record_link(DeviceSlotLink {
+                device_serial: "SN1".into(),
+                slot: SlotAddr {
+                    bank: "user".into(),
+                    index: 0,
+                },
+                library_patch_id: "old".into(),
+                hash_at_transfer: exact_hash(&[7, 7, 7]),
+                transferred_at: 1,
+            })
+            .unwrap();
+        let journal = MemJournal::default();
+        let mut plan = plan_of("user", &[("p0", 0, true)]);
+        plan.writes[0].expected_before_hash = Some(exact_hash(&[8, 8])); // potwierdzenie
+        let mut ctx = SlotWriteContext {
+            protocol: &proto,
+            link: &mut link,
+        };
+        let mut seq = 0;
+        let out = execute_push(&plan, &mut ctx, &mut store, &journal, "SN1", 5, &mut seq).unwrap();
+        assert_eq!(out.writes_applied, 1);
+        assert_eq!(proto.read("user", 0), vec![1, 1, 1]); // nadpisany mimo rozjazdu
+    }
+
+    #[test]
+    fn wal_committed_append_error_rolls_back_current_slot() {
+        // K1: błąd zapisu wpisu Committed (2. append) — slot już zapisany fizycznie,
+        // MUSI zostać cofnięty (rollback obejmuje bieżący slot).
+        let proto = MockProtocol::new();
+        proto.seed("user", 0, vec![9, 9]);
+        let mut link = dummy_link();
+        let mut store = MemoryStore::new();
+        store.add(lib_patch("p0", vec![1, 1, 1])).unwrap();
+        let journal = MemJournal {
+            fail_append_at: Some(2), // prepared OK, committed pada
+            ..Default::default()
+        };
+        let plan = plan_of("user", &[("p0", 0, false)]);
+        let mut ctx = SlotWriteContext {
+            protocol: &proto,
+            link: &mut link,
+        };
+        let mut seq = 0;
+        let err =
+            execute_push(&plan, &mut ctx, &mut store, &journal, "SN1", 1, &mut seq).unwrap_err();
+        assert!(matches!(err, ExecError::Wal(_)));
+        assert_eq!(proto.read("user", 0), vec![9, 9]); // cofnięty
+        assert_eq!(store.links_for_device("SN1").len(), 0); // brak provenance
+    }
+
+    #[test]
+    fn wal_prepared_append_error_rolls_back_prior_slots() {
+        // K1: błąd zapisu Prepared dla 2. slotu — 1. slot (już zapisany) cofnięty.
+        let proto = MockProtocol::new();
+        proto.seed("user", 0, vec![9, 9]);
+        let mut link = dummy_link();
+        let mut store = MemoryStore::new();
+        store.add(lib_patch("p0", vec![1, 1, 1])).unwrap();
+        store.add(lib_patch("p1", vec![2, 2, 2])).unwrap();
+        let journal = MemJournal {
+            fail_append_at: Some(3), // slot0: prepared+committed OK; slot1: prepared pada
+            ..Default::default()
+        };
+        let plan = plan_of("user", &[("p0", 0, false), ("p1", 1, false)]);
+        let mut ctx = SlotWriteContext {
+            protocol: &proto,
+            link: &mut link,
+        };
+        let mut seq = 0;
+        let err =
+            execute_push(&plan, &mut ctx, &mut store, &journal, "SN1", 1, &mut seq).unwrap_err();
+        assert!(matches!(err, ExecError::Wal(_)));
+        assert_eq!(proto.read("user", 0), vec![9, 9]); // slot0 cofnięty
     }
 
     #[test]

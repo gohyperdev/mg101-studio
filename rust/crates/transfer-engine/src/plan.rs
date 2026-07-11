@@ -29,6 +29,13 @@ pub struct PlannedWrite {
     pub target: SlotAddr,
     /// Czy slot docelowy był zajęty (nadpisanie).
     pub overwrites: bool,
+    /// Oczekiwany hash zawartości slotu PRZED zapisem (ze skanu w chwili planu).
+    /// `execute_push` egzekwuje go dla KAŻDEGO slotu (nie tylko powiązanego):
+    /// jeśli bieżąca zawartość ≠ oczekiwana → konflikt (ktoś zmienił slot między
+    /// zatwierdzeniem planu a wykonaniem). `None` = pomiń kontrolę (świeży zapis
+    /// do pustego slotu). Świadome nadpisanie stanu `DeviceModified` = ustawienie
+    /// tu bieżącego hasha urządzenia (użytkownik potwierdza, że widzi ten stan).
+    pub expected_before_hash: Option<String>,
 }
 
 /// Plan transferu grupowego — raport do zatwierdzenia / dry-run (HLD §5 pkt 2).
@@ -90,8 +97,9 @@ pub fn plan_push(
     }
     let n = patches.len();
 
-    // 1. Wyznacz sloty docelowe wg strategii.
-    let targets: Vec<SlotAddr> = match placement {
+    // 1. Wyznacz indeksy docelowe (u32 — bez ryzyka przepełnienia u16 przy
+    //    arytmetyce start+i; walidacja zakresu w kroku 2).
+    let target_indices: Vec<u32> = match placement {
         Placement::NextFree => {
             let free = storage.free_slots(bank, occupied);
             if free.len() < n {
@@ -100,14 +108,9 @@ pub fn plan_push(
                     available: free.len(),
                 });
             }
-            free.into_iter().take(n).collect()
+            free.into_iter().take(n).map(|a| a.index as u32).collect()
         }
-        Placement::FromSlot(start) => (0..n)
-            .map(|i| SlotAddr {
-                bank: bank.clone(),
-                index: start + i as u16,
-            })
-            .collect(),
+        Placement::FromSlot(start) => (0..n).map(|i| start as u32 + i as u32).collect(),
         Placement::Overwrite { start, len } => {
             if n != len as usize {
                 return Err(PlanError::CountMismatch {
@@ -115,21 +118,25 @@ pub fn plan_push(
                     slots: len as usize,
                 });
             }
-            (0..n)
-                .map(|i| SlotAddr {
-                    bank: bank.clone(),
-                    index: start + i as u16,
-                })
-                .collect()
+            (0..n).map(|i| start as u32 + i as u32).collect()
         }
     };
 
-    // 2. Wszystkie cele muszą leżeć w zakresie banku.
-    let max_index = info.index_base + info.slots; // wyłącznie
-    for t in &targets {
-        if t.index < info.index_base || t.index >= max_index {
-            return Err(PlanError::OutOfRange(t.clone()));
+    // 2. Wszystkie cele muszą leżeć w zakresie banku (i mieścić się w u16).
+    let base = info.index_base as u32;
+    let max_index = base + info.slots as u32; // wyłącznie
+    let mut targets: Vec<SlotAddr> = Vec::with_capacity(n);
+    for idx in target_indices {
+        if idx < base || idx >= max_index {
+            return Err(PlanError::OutOfRange(SlotAddr {
+                bank: bank.clone(),
+                index: idx.min(u16::MAX as u32) as u16,
+            }));
         }
+        targets.push(SlotAddr {
+            bank: bank.clone(),
+            index: idx as u16, // < max_index ≤ u16 (slots/index_base to u16)
+        });
     }
 
     // 3. Limity (dane profilu) — liczone na stanie WYNIKOWYM (po zapisie).
@@ -171,6 +178,8 @@ pub fn plan_push(
     }
 
     // 4. Zbuduj plan (nadpisania oznaczone względem stanu WEJŚCIOWEGO).
+    //    `expected_before_hash` domyślnie None — wypełnia je warstwa sync ze
+    //    skanu slotów (kontrola konfliktu przy wykonaniu).
     let writes = patches
         .iter()
         .zip(targets)
@@ -178,6 +187,7 @@ pub fn plan_push(
             overwrites: occupied.contains(&target),
             patch_id: patch_id.clone(),
             target,
+            expected_before_hash: None,
         })
         .collect();
 
@@ -341,21 +351,107 @@ mod tests {
         ));
     }
 
+    /// Urządzenie z jednym bankiem 128 slotów, ale limitem total 100 (HLD §5:
+    /// „128 slotów, limit 100" — pojemność > limit).
+    fn flat_128_limit_100() -> TestStorage {
+        TestStorage {
+            banks: vec![BankInfo {
+                id: "main".into(),
+                label: "Main".into(),
+                slots: 128,
+                index_base: 0,
+                writable: true,
+                reorderable: true,
+                erasable: true,
+            }],
+            limits: StorageLimits {
+                max_writable_total: Some(100),
+                per_bank: BTreeMap::new(),
+            },
+        }
+    }
+
     #[test]
-    fn enforces_total_limit_before_write() {
-        // Limit 36; 35 zajętych; próba dołożenia 2 do wolnych → wynik 37 > 36.
-        let s = mg101_like();
-        let occ: SlotMap = (0..35)
+    fn enforces_total_limit_when_capacity_exceeds_limit() {
+        // 100 slotów zajętych; dołożenie 1 do wolnego slotu 100 → wynik 101 > 100.
+        let s = flat_128_limit_100();
+        let occ: SlotMap = (0..100)
             .map(|i| SlotAddr {
-                bank: "user".into(),
+                bank: "main".into(),
                 index: i,
             })
             .collect();
-        // FromSlot(35) celuje w jedyny wolny + jeden poza → OutOfRange łapie wcześniej,
-        // więc testujemy limit przez Overwrite w wolne... użyjmy NextFree z 1 wolnym:
-        let err = plan_push(&s, &"user".into(), &occ, &ids(2), Placement::NextFree).unwrap_err();
-        // Tu zabraknie wolnych (NoFreeSlots) — limit i pojemność się pokrywają dla MG-101.
-        assert!(matches!(err, PlanError::NoFreeSlots { .. }));
+        let err =
+            plan_push(&s, &"main".into(), &occ, &ids(1), Placement::FromSlot(100)).unwrap_err();
+        assert!(matches!(
+            err,
+            PlanError::OverLimit {
+                limit: 100,
+                resulting: 101,
+                ..
+            }
+        ));
+        // Ten sam slot 100 nadpisany (gdyby zajęty) nie łamie limitu — tu wolny,
+        // więc dokładnie limit jest bramką, nie pojemność (jest jeszcze 28 slotów).
+    }
+
+    #[test]
+    fn respects_index_base_one() {
+        let s = TestStorage {
+            banks: vec![BankInfo {
+                id: "a".into(),
+                label: "A".into(),
+                slots: 4,
+                index_base: 1, // sloty 1..5
+                writable: true,
+                reorderable: true,
+                erasable: true,
+            }],
+            limits: StorageLimits::default(),
+        };
+        // FromSlot(1) mieści się (1,2), FromSlot(0) i FromSlot(4)+2 wypadają.
+        let plan = plan_push(
+            &s,
+            &"a".into(),
+            &SlotMap::new(),
+            &ids(2),
+            Placement::FromSlot(1),
+        )
+        .unwrap();
+        assert_eq!(plan.writes[0].target.index, 1);
+        assert!(matches!(
+            plan_push(&s, &"a".into(), &SlotMap::new(), &ids(1), Placement::FromSlot(0)),
+            Err(PlanError::OutOfRange(a)) if a.index == 0
+        ));
+        assert!(matches!(
+            plan_push(&s, &"a".into(), &SlotMap::new(), &ids(2), Placement::FromSlot(4)),
+            Err(PlanError::OutOfRange(a)) if a.index == 5
+        ));
+        // free_slots też respektuje bazę: 4 wolne od indeksu 1.
+        let plan = plan_push(
+            &s,
+            &"a".into(),
+            &SlotMap::new(),
+            &ids(1),
+            Placement::NextFree,
+        )
+        .unwrap();
+        assert_eq!(plan.writes[0].target.index, 1);
+    }
+
+    #[test]
+    fn u16_overflow_in_from_slot_is_out_of_range_not_panic() {
+        // start blisko granicy u16: brak paniki (arytmetyka u32), zwraca OutOfRange.
+        let s = mg101_like();
+        let err = plan_push(
+            &s,
+            &"user".into(),
+            &SlotMap::new(),
+            &ids(2),
+            Placement::FromSlot(u16::MAX),
+        )
+        .unwrap_err();
+        assert!(matches!(err, PlanError::OutOfRange(_)));
     }
 
     #[test]

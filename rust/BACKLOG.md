@@ -82,6 +82,31 @@
   usunąć); `LibraryIndex.revision` martwe; blob w JSON (~4× narzut) vs
   content-addressed store (HLD §3) — na desktop OK; indeks per-tag w SQLite.
 
+## Z review E5 (naprawione lub zaplanowane)
+- [x] K1: rollback partii na WSZYSTKICH ścieżkach błędu (append prepared/committed,
+  record_link, brak patcha) — nie tylko protokół/konflikt. +3 testy.
+- [x] K2: wykonywalne nadpisanie konfliktu — `PlannedWrite.expected_before_hash`
+  egzekwowany per slot; potwierdzenie = ustawienie bieżącego hasha. Domyka W2
+  (konflikt wykrywany dla każdego slotu, nie tylko powiązanego). +test.
+- [x] W1: arytmetyka indeksów w u32 (bez paniki/wrap u16); +testy index_base=1,
+  FromSlot(u16::MAX), realny limit total (128 slotów/limit 100).
+- [x] Drobne: unifikacja przestrzeni hashy (exec używa bibliotecznego exact_hash);
+  Conflict.applied→rolled_back.
+- W3 (ŚWIADOMIE ODŁOŻONE): dziennik WAL device-transferów współdzieli przestrzeń
+  id z patchami (`slot:<bank>:<idx>`). Crash-recovery slotów NIE jest obsłużone —
+  `plan_recovery` (biblioteczne) nie umie pisać na urządzenie. Decyzja: przy
+  porcie egzekutora recovery (E6+/StudioState) rozdzielić dziennik transferów od
+  bibliotecznego (osobny store + device-aware applier). Do tego czasu rollback
+  partii pokrywa awarie bez crasha. Rollback nie jest dziennikowany → wpisy
+  Committed cofniętych zapisów zostają (nie wykonywać `session_inverses` na tym
+  dzienniku bez rozdzielenia).
+- W4 (przeniesione): odczyty store `Option`→`Result` (awaria SQLite w push myli
+  się z PatchMissing). Do zrobienia razem z rozdzieleniem dziennika w E6.
+- Pull całych banków (HLD §5 „także całych banków") — dodać `pull_bank` obok
+  `pull_slot` (jest `read_bank` w device-pack-api). E6/E7.
+- `pull_slot`: 9 argumentów → struct parametrów. `TransferPlan` pola pub →
+  re-walidacja w execute_push lub konstruktor zamknięty.
+
 ## Nice-to-have (dowolny moment)
 - CI: cache `Swatinem/rust-cache` + `concurrency` group.
 - `Cargo.toml`: usunąć redundantne `[lib] name/path`; zweryfikować URL repo.
