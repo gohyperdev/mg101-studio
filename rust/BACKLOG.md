@@ -1,5 +1,39 @@
 # Backlog techniczny (uwagi z review, per epik)
 
+## Z review E0 (in-transcript, Fable 5 — naprawione lub zaplanowane)
+- [x] K1: CI supply-chain — `permissions: contents: read` + pinowana akcja
+  `bytecodealliance/actions/wasmtime/setup@v1` zamiast `curl | bash`
+  niewersjonowanego skryptu.
+- [x] K2: `SysexAssembler` — System Common (0xF1..=0xF7) KASUJE running status
+  (było: ustawiał `running_status=b`, więc luźny `F7` rodził śmieciowe ramki
+  `[F7,x]`); osierocony `F7` ignorowany; `>=` → `==` przy zamknięciu ramki.
+  +2 testy regresyjne.
+- N (niekryt.): bufor SysEx bez górnego limitu (cap ~64 KiB); nieograniczony
+  `mpsc` w MidirLink; `[workspace.dependencies]` puste mimo duplikacji serde/
+  sha2; `device-pack-api` ciągnie `midir` tranzytywnie (feature `hardware`);
+  brak MSRV `rust-version`; cache CI; `MockLink` za featurą `test-util`.
+
+## Z review E1 (in-transcript, Fable 5 — APPROVE, brak uwag krytycznych)
+- Kodek bezstratny potwierdzony konstrukcyjnie (blob = źródło prawdy) + test
+  adwersaryjny + bramka 36/36 + dowód WASM. Niekryt.: mutacja `name`/`bpm`/`ir_*`
+  na CanonicalPatch ignorowana przy encode (akcesory zamiast pól pub); guard
+  `record_size` w `encode` (panic `copy_from_slice` przy złym profilu);
+  `debug_assert` długości w `zip`; MSRV dla `is_multiple_of`; nazwa `wrong_len`.
+
+## Z review E2 (in-transcript, Fable 5 — naprawione lub zaplanowane)
+- [x] K1: `device_index` odrzuca indeks poza bankiem (>= 36) — było: `user/40`
+  po cichu adresowało slot Factory, a `index >= 128` wstawiał bajt >= 0x80 do
+  SysEx (niepoprawna ramka). Granica banku gwarantuje też 7-bitowość idx. +test.
+- [x] K2: `write_slot` wymusza `blob.len() == 189` (SLOT_RECORD_LEN) — było:
+  tylko niepustość+7bit; zapis złej długości fire-and-forget mógł uszkodzić
+  rekord slotu. +test. Zaktualizowano komentarze prowizoryczności (mapowanie
+  banków potwierdzone sprzętowo w findings.md).
+- N (niekryt.): dump.rs — nagłówek bloku bez bank/idx (przesunięcie przy
+  częściowym zrzucie), `exit(3)` przy `ok<72`, `u16::try_from` na długości;
+  guard `write_slot` na bank `factory` (ReadOnly); walidacja długości w
+  `read_slot`; drenaż `poll()` przed żądaniem; wypis nazwy portu w dump.
+
+
 ## Do E1 (przeniesione dalej — kontrakt device)
 - `device-pack-api`: `StorageLimits` uzupełnić o `per_bank` (HLD §2); `BankInfo`
   dodać `erasable`. Kontrakt musi pokryć profil JSON MG-101.

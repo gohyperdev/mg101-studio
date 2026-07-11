@@ -4,6 +4,11 @@ on:
     paths: ["rust/**", ".github/workflows/rust.yml"]
   pull_request:
     paths: ["rust/**", ".github/workflows/rust.yml"]
+
+# Najmniejsze uprawnienia tokena (review E0/K1) — CI tylko czyta repo.
+permissions:
+  contents: read
+
 jobs:
   # Build+test całego workspace (w tym desktop/Slint — dowód #4 cross-platform)
   # na macOS i Windows. GUI Slint nie startuje w `cargo test` (okno tylko w
@@ -47,9 +52,13 @@ jobs:
         run: |
           cargo build -p mg101-core --target wasm32-unknown-unknown
           cargo build -p mg101-pack-nux-mg101 --target wasm32-unknown-unknown
+      # Pinowana akcja zamiast `curl | bash` niewersjonowanego skryptu (review
+      # E0/K1 — supply-chain). Instaluje wasmtime na PATH.
       - name: Install wasmtime
-        run: curl -sSf https://wasmtime.dev/install.sh | bash
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "v27.0.0"
       - name: Kodek round-trip 1:1 w WASM
         run: |
           cargo build -p mg101-pack-nux-mg101 --example wasm_roundtrip --target wasm32-wasip1
-          ~/.wasmtime/bin/wasmtime run target/wasm32-wasip1/debug/examples/wasm_roundtrip.wasm
+          wasmtime run target/wasm32-wasip1/debug/examples/wasm_roundtrip.wasm

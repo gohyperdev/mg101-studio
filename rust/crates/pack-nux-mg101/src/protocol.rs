@@ -36,9 +36,12 @@ fn is_7bit(payload: &[u8]) -> bool {
     payload.iter().all(|&b| b < 0x80)
 }
 
-/// Bazowe indeksy banków w przestrzeni adresowej urządzenia (prowizoryczne).
+/// Bazowe indeksy banków w przestrzeni adresowej urządzenia (potwierdzone
+/// sprzętowo — `findings.md`: `user`=0.., `factory`=36..).
 const USER_BASE: u16 = 0;
 const FACTORY_BASE: u16 = 36;
+/// Liczba slotów w banku (User i Factory po 36 — dump 72/72).
+const SLOTS_PER_BANK: u16 = 36;
 
 /// Limit oczekiwania na ramkę danych ze sprzętu.
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
@@ -62,13 +65,20 @@ impl Mg101Protocol {
         f
     }
 
-    /// Mapuje adres slotu na indeks urządzenia (prowizoryczne).
+    /// Mapuje adres slotu na indeks urządzenia.
     fn device_index(addr: &SlotAddr) -> Result<u8, ProtocolError> {
         let base = match addr.bank.as_str() {
             "user" => USER_BASE,
             "factory" => FACTORY_BASE,
             _ => return Err(ProtocolError::BadAddr(addr.clone())),
         };
+        // Indeks poza bankiem odrzucany (review E2/K1): bez tego np. `user/40`
+        // po cichu zaadresowałoby slot Factory (base 36 + 4), a `index >= 128`
+        // wstawiłoby bajt >= 0x80 w środek SysEx (niepoprawna ramka). Granica
+        // banku (36) gwarantuje też, że wynik jest 7-bitowy (max 71).
+        if addr.index >= SLOTS_PER_BANK {
+            return Err(ProtocolError::BadAddr(addr.clone()));
+        }
         // Liczenie w u32 chroni przed przepełnieniem u16 przy dużym indeksie.
         u8::try_from(u32::from(base) + u32::from(addr.index))
             .map_err(|_| ProtocolError::BadAddr(addr.clone()))
@@ -128,11 +138,19 @@ impl DeviceProtocol for Mg101Protocol {
         addr: &SlotAddr,
         blob: &[u8],
     ) -> Result<(), ProtocolError> {
-        // Payload wire musi być 7-bitowy (inwariant SysEx). Kodowanie surowego
-        // rekordu do 7-bit robi transkoder wire↔rekord (zaparkowany do E2/sprzęt).
-        if blob.is_empty() || !is_7bit(blob) {
+        // Długość rekordu wire musi być dokładnie 189 B (capture 04b — review
+        // E2/K2): zapis krótszego/dłuższego payloadu fire-and-forget (bez ACK)
+        // mógłby po cichu uszkodzić rekord w slocie. "Bajty święte" dla wire.
+        if blob.len() != SLOT_RECORD_LEN {
+            return Err(ProtocolError::BadResponse(format!(
+                "rekord slotu musi mieć {SLOT_RECORD_LEN} B (otrzymano {})",
+                blob.len()
+            )));
+        }
+        // Payload wire musi być 7-bitowy (inwariant SysEx).
+        if !is_7bit(blob) {
             return Err(ProtocolError::BadResponse(
-                "payload zapisu musi być niepusty i 7-bitowy (0x00..=0x7F)".into(),
+                "payload zapisu musi być 7-bitowy (0x00..=0x7F)".into(),
             ));
         }
         let idx = Self::device_index(addr)?;
@@ -266,11 +284,58 @@ mod tests {
         assert_eq!(*sent.last().unwrap(), SYSEX_END);
         assert_eq!(sent.len(), 7 + SLOT_RECORD_LEN + 1);
 
-        // Payload nie-7-bitowy → błąd, bez wysyłki.
+        // Payload poprawnej DŁUGOŚCI, ale nie-7-bitowy → błąd, bez wysyłki.
         let mut link2 = MockLink::new(|_| vec![]);
-        let err = Mg101Protocol.write_slot(&mut link2, &addr, &[0x80u8; 10]);
+        let mut bad = vec![0x00u8; SLOT_RECORD_LEN];
+        bad[100] = 0x80;
+        let err = Mg101Protocol.write_slot(&mut link2, &addr, &bad);
         assert!(matches!(err, Err(ProtocolError::BadResponse(_))));
         assert!(link2.sent.is_empty());
+    }
+
+    #[test]
+    fn write_slot_rejects_wrong_length(/* review E2/K2 */) {
+        let mut link = MockLink::new(|_| vec![]);
+        let addr = SlotAddr {
+            bank: "user".into(),
+            index: 0,
+        };
+        for len in [0usize, SLOT_RECORD_LEN - 1, SLOT_RECORD_LEN + 1] {
+            let err = Mg101Protocol.write_slot(&mut link, &addr, &vec![0x00u8; len]);
+            assert!(
+                matches!(err, Err(ProtocolError::BadResponse(_))),
+                "len={len} powinno być odrzucone"
+            );
+        }
+        assert!(
+            link.sent.is_empty(),
+            "żaden błędny zapis nie poszedł na łącze"
+        );
+    }
+
+    #[test]
+    fn index_out_of_bank_is_bad_addr(/* review E2/K1 */) {
+        let mut link = MockLink::new(|_| vec![]);
+        // user/40 NIE może zaadresować Factory — indeks poza bankiem (36) odrzucony.
+        for bank in ["user", "factory"] {
+            let addr = SlotAddr {
+                bank: bank.into(),
+                index: SLOTS_PER_BANK, // 36 — pierwszy poza zakresem
+            };
+            assert!(
+                matches!(
+                    Mg101Protocol.read_slot(&mut link, &addr),
+                    Err(ProtocolError::BadAddr(_))
+                ),
+                "{bank}/{SLOTS_PER_BANK} powinno być BadAddr"
+            );
+            let blob = vec![0x00u8; SLOT_RECORD_LEN];
+            assert!(matches!(
+                Mg101Protocol.write_slot(&mut link, &addr, &blob),
+                Err(ProtocolError::BadAddr(_))
+            ));
+        }
+        assert!(link.sent.is_empty());
     }
 
     #[test]

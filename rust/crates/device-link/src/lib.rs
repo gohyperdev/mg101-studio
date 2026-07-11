@@ -114,10 +114,23 @@ impl SysexAssembler {
                 continue;
             }
             if b >= 0x80 {
-                // Nowy bajt statusu.
-                self.running_status = b;
-                self.expected = message_len(b);
+                // Bajt statusu (realtime F8..FF i SysEx F0 obsłużone wyżej; tu
+                // 0x80..=0xF7). Running status dotyczy WYŁĄCZNIE komunikatów
+                // kanałowych 0x80..=0xEF; System Common (0xF1..=0xF7) go KASUJE
+                // (naprawa review E0/K2 — wcześniej ustawiał running_status=b,
+                // więc osierocony terminator F7 rodził śmieciowe ramki).
                 self.pending.clear();
+                if b == 0xF7 {
+                    // Osierocony ogon SysEx (bez F0) — ignoruj, skasuj kontekst.
+                    self.running_status = 0;
+                    continue;
+                }
+                if (0xF1..=0xF6).contains(&b) {
+                    self.running_status = 0; // System Common — nie bierze udziału
+                } else {
+                    self.running_status = b; // kanałowe 0x80..=0xEF
+                }
+                self.expected = message_len(b);
                 self.pending.push(b);
                 if self.pending.len() == self.expected {
                     out.push(std::mem::take(&mut self.pending));
@@ -132,7 +145,9 @@ impl SysexAssembler {
                     self.expected = message_len(self.running_status);
                 }
                 self.pending.push(b);
-                if self.pending.len() >= self.expected {
+                // `==` (nie `>=`): ramka zamyka się dokładnie przy oczekiwanej
+                // długości (review E0/K2).
+                if self.pending.len() == self.expected {
                     out.push(std::mem::take(&mut self.pending));
                 }
             }
@@ -321,6 +336,34 @@ mod tests {
         // Kolejny poprawny SysEx po przerwaniu składa się normalnie.
         let out2 = a.push(&[0xF0, 0x11, 0xF7]);
         assert_eq!(out2, vec![vec![0xF0, 0x11, 0xF7]]);
+    }
+
+    #[test]
+    fn orphan_f7_is_ignored_and_does_not_poison_running_status() {
+        // Regresja E0/K2: osierocony terminator F7 (ogon SysEx bez F0) NIE może
+        // ustawić running_status=0xF7 ani zrodzić śmieciowych ramek [F7, x].
+        let mut a = SysexAssembler::new();
+        // Najpierw ustal running status kanałowy, potem wtrąć luźny F7.
+        assert_eq!(a.push(&[0xB0, 44, 100]), vec![vec![0xB0, 44, 100]]);
+        let out = a.push(&[0xF7, 45, 20]);
+        // F7 zignorowany i skasował kontekst → dane 45/20 bez statusu = pominięte.
+        assert!(
+            out.is_empty(),
+            "luźny F7 nie może rodzić ramek, było: {out:?}"
+        );
+    }
+
+    #[test]
+    fn system_common_cancels_running_status() {
+        // System Common (np. Song Position F2) kasuje running status: kolejne
+        // bajty danych bez własnego statusu są pomijane, nie doklejane do CC.
+        let mut a = SysexAssembler::new();
+        assert_eq!(a.push(&[0xB0, 44, 100]), vec![vec![0xB0, 44, 100]]);
+        // F2 = Song Position (3 bajty), potem luźne dane.
+        let out = a.push(&[0xF2, 0x10, 0x20, 55, 66]);
+        assert_eq!(out, vec![vec![0xF2, 0x10, 0x20]], "F2 zamyka się na 3 B");
+        // 55/66 bez statusu (running skasowany przez F2) → pominięte.
+        assert!(a.push(&[77]).is_empty());
     }
 
     #[test]
