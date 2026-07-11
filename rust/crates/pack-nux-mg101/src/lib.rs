@@ -56,7 +56,7 @@ mod tests {
 
     const ORACLE: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../Sources/MG101Core/Resources/factory-patches.mg101patch"
+        "/oracle/factory-patches.mg101patch"
     ));
 
     fn profile() -> DeviceProfile {

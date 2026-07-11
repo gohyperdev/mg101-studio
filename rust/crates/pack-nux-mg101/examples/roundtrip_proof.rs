@@ -11,7 +11,7 @@ use mg101_pack_nux_mg101::{load, Container};
 fn main() {
     let oracle_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../Sources/MG101Core/Resources/factory-patches.mg101patch"
+        "/oracle/factory-patches.mg101patch"
     );
     let data = std::fs::read(oracle_path).expect("odczyt oracle .mg101patch");
     let (profile, _catalog) = load().expect("profil MG-101");

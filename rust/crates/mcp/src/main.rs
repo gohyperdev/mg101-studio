@@ -1,4 +1,4 @@
-//! Binarka serwera MCP MG-101 po stdio (port `Sources/MG101MCP/main.swift`).
+//! Binarka serwera MCP MG-101 po stdio (port `archive/swift-v1/Sources/MG101MCP/main.swift`).
 //!
 //! Ładuje profil/katalog z packa NUX MG-101 i obsługuje sesję MCP na stdin/stdout.
 //! Logi diagnostyczne idą na stderr (stdout jest kanałem protokołu — nie zaśmiecać).

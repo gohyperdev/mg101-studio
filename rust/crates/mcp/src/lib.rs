@@ -1,4 +1,4 @@
-//! Serwer MCP (rmcp) po stdio — port `Sources/MG101MCP/main.swift`.
+//! Serwer MCP (rmcp) po stdio — port `archive/swift-v1/Sources/MG101MCP/main.swift`.
 //!
 //! Wystawia narzędzia **plikowe** (wariant `File` rejestru komend E3): każda
 //! komenda mutująca wczytuje `input`, edytuje przez rdzeń i zapisuje `output`

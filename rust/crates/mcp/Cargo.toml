@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 # Serwer MCP (rmcp) po stdio: narzędzia wariantu File z rejestru komend (E3),
-# executor plikowy (studio::file_ops) — port Sources/MG101MCP. E6.3.
+# executor plikowy (studio::file_ops) — port archive/swift-v1/Sources/MG101MCP. E6.3.
 [dependencies]
 mg101-core = { path = "../core" }
 mg101-commands = { path = "../commands" }

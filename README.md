@@ -1,9 +1,19 @@
 # MG101 Studio
 
-Natywna aplikacja macOS 14+ dla Apple Silicon do bezpiecznej edycji plików
-NUX MG-101. Interfejs, writer i serwer MCP korzystają z tego samego profilu
-urządzenia. Nieznane bajty pozostają bez zmian, a eksport zawsze tworzy nowy
-plik.
+> **Aktywna implementacja: `rust/`** — projekt został przepisany ze Swifta na
+> Rust (workspace Cargo, 11 crate'ów: rdzeń device-agnostyczny, biblioteka,
+> transfer, agent, serwer MCP rmcp, desktop Slint na macOS+Windows, rdzeń gotowy
+> na WASM). Wersja Swift 1.x została **zarchiwizowana** w
+> [`archive/swift-v1/`](archive/swift-v1/) (referencja, nie rozwijana). Format
+> pliku `.mg101patch` jest w pełni kompatybilny — kodek Rust jest bezstratny
+> bit-w-bit (bramka round-trip 36/36, 0 różnic). Build i testy: `cd rust && cargo
+> test`. Szczegóły architektury: `docs/architecture/`, `docs/adr/`.
+
+Poniższy opis dotyczy zachowania produktu (parytet utrzymany w wersji Rust).
+
+Natywna aplikacja do bezpiecznej edycji plików NUX MG-101. Interfejs, writer i
+serwer MCP korzystają z tego samego profilu urządzenia. Nieznane bajty pozostają
+bez zmian, a eksport zawsze tworzy nowy plik.
 
 ## Zakres wersji 1.2
 
