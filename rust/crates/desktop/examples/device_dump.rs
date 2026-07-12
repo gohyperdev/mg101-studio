@@ -36,12 +36,30 @@ fn main() {
                         factory.len(),
                         occ(&factory),
                     );
-                    if let Some(s) = user.first() {
-                        println!(
-                            "  User[0] blob {} B, pierwsze 8: {:02X?}",
-                            s.blob.len(),
-                            &s.blob[..8.min(s.blob.len())]
-                        );
+                    // Dekodowanie wire→plik: nazwy slotów + parametry pierwszego patcha.
+                    use mg101_pack_nux_mg101::wire;
+                    println!("  Nazwy Factory 0..8 (dekod wire):");
+                    for s in factory.iter().take(8) {
+                        println!("    {:02}: {}", s.index, wire::decode_name(&s.blob));
+                    }
+                    if let Some(s) = factory.first() {
+                        if let Ok(rec) = wire::decode_slot(&s.blob) {
+                            let (profile, catalog) = mg101_pack_nux_mg101::load().unwrap();
+                            let pr = mg101_core::PatchRecord::new(rec, &profile).unwrap();
+                            println!(
+                                "  Factory[0] '{}' BPM={} — modele bloków:",
+                                pr.name(),
+                                pr.bpm()
+                            );
+                            for b in &profile.blocks {
+                                let id = pr.model_id(b);
+                                let name = catalog
+                                    .model(&b.id, id)
+                                    .map(|m| m.display_name.as_str())
+                                    .unwrap_or("—");
+                                println!("    {:>4} = {} (model {id})", b.id, name);
+                            }
+                        }
                     }
                     return;
                 }

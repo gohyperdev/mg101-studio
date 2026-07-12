@@ -250,10 +250,20 @@
   ScrollView z Rust (po refresh). Teraz scroll działa (viewport-width + szerokość
   VerticalLayout), ale nie dojeżdża sam na dół. Do dodania: Timer/prop w oknie.
 
-## W2 — import z urządzenia: dekoder wire→kanoniczny (RE)
-- Rekord wire (ramka `0B`, payload 189 B w capture 04b / 62 B w pasywnym dumpie)
-  używa INNEGO kodowania niż plik 8402 B (grupy ~3-bajtowe; `mg101-probe/captures`).
-  Import z urządzenia zapisuje na razie surowy blob wire + proweniencję; pełne
-  mapowanie na listę parametrów wymaga złamania kodeka wire na próbkach kontrolnych
-  `mg101-patch-tools/samples/controlled` (31 eksperymentów single-param). To osobny
-  projekt RE. Plik→parametry jest już 100% (katalog bajt-identyczny z referencją).
+## W2 — import z urządzenia: dekoder wire→kanoniczny — ZŁAMANY
+- [x] Kodek wire (ramka `0B`, 189 B) → plik 8402 B WYPROWADZONY i zweryfikowany:
+  189 B = 63 ramki × 3 B, 2 wartości/ramkę (bit-packing). `pack::wire::decode_slot`
+  / `decode_name`. Trafność: selektory 396/396, BPM/nazwy 36/36, parametry 99.2%
+  (na sparowanych danych Factory==oracle). UI: nazwy slotów + „Import → Biblioteka".
+- [ ] **Pozostała luka (0.8%): 4 parametry o wartości pliku >127** (dly time 0x45,
+  cab 0x50, amp 0x21, mod 0x3D). Kanał wire jest 7-bit + 1 bit przepełnienia z b0,
+  niespójnie stosowany dla pól extended-range. Do domknięcia: sparowane capture'y
+  pojedynczych zmian tych parametrów z QuickTone (omiatające pełen zakres) →
+  ustalić bit MSB/skalę. Dane fabryczne mają dla tych pól jedną wartość → wzór
+  nie jest jednoznacznie wyprowadzalny z obecnego zbioru.
+- [ ] Pola stałe w Factory (send, return, patch.max/pos, pedal; bypass amp/cab/sr;
+  wah model/bypass) zlokalizowane tylko pozycyjnie przez stałe — potwierdzić na
+  parach z banku User (gdzie się zmieniają).
+- [ ] Region IR (0x82..) nie jest niesiony przez wire `0B` — import daje patch bez
+  IR (zerowy). Preset na urządzeniu wiąże IR osobno (ramki `6C`, sloty IR) — do
+  ewentualnego dołączenia przy pełnym transferze dwukierunkowym.
