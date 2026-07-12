@@ -9076,7 +9076,8 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "confirmed"
+       "semantic_confidence": "inferred",
+       "display_name": "MIN"
       },
       {
        "name": "patch_max",
@@ -9090,7 +9091,8 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "confirmed"
+       "semantic_confidence": "inferred",
+       "display_name": "MAX"
       },
       {
        "name": "patch_level",
@@ -9104,7 +9106,10 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "confirmed"
+       "semantic_confidence": "confirmed",
+       "display_name": "LEVEL",
+       "unit": "dB",
+       "display_transform": "raw / 100 * 24 - 12"
       },
       {
        "name": "patch_level_position",
@@ -9118,10 +9123,21 @@
        ],
        "encoding": "flagged_nibble_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "confirmed",
+       "semantic_confidence": "inferred",
        "logical_range": [
         0,
         1
+       ],
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 1,
+         "label": "PRECEDE"
+        },
+        {
+         "value": 128,
+         "label": "POSTERIOR"
+        }
        ]
       }
      ]

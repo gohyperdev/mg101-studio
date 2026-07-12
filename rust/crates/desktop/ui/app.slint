@@ -18,11 +18,13 @@ export struct ParamRowUi {
     value: int,
     minimum: int,
     maximum: int,
-    control: string, // "slider" | "toggle"
+    control: string, // "slider" | "toggle" | "enum"
     unit: string,
     midi-cc: int, // -1 = nieznany
     confirmed: bool, // false = wartość/semantyka "inferred"
     display: string, // wartość fizyczna (dB/Hz), pusta gdy brak wzoru
+    enum-label: string, // enum: etykieta bieżącego stanu (np. PRECEDE)
+    enum-next: int,     // enum: wartość surowa następnego stanu (do toggle)
 }
 
 export struct BlockRowUi {
@@ -147,6 +149,7 @@ export component AppWindow inherits Window {
     in property <string> t-tip-delete;
     in property <string> t-tip-revert;
     in property <string> t-tip-copy-library;
+    in property <string> t-tip-toggle;
     in property <string> t-empty-slot;
     in property <string> t-rev;
     in property <string> t-settings;
@@ -517,6 +520,19 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
+                                    // Enum (np. POSITION): pokazuje bieżący stan, klik cyklicznie
+                                    // ustawia następny (wartości surowe z katalogu, np. 1/128).
+                                    if p.control == "enum": Text {
+                                        width: 90px;
+                                        text: p.enum-label;
+                                        color: white;
+                                        vertical-alignment: center;
+                                    }
+                                    if p.control == "enum": Button {
+                                        text: "⇄";
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.enum-next, p.midi-cc); }
+                                        Tooltip { text: @markdown("\{root.t-tip-toggle}"); }
+                                    }
                                     // Wartość toggle: przełącznik ON/OFF.
                                     if p.control == "toggle": Text {
                                         width: 54px;
@@ -530,7 +546,7 @@ export component AppWindow inherits Window {
                                     }
                                     // Wartość ciągła: EDYTOWALNE pole (walidacja zakresu w Rust —
                                     // wartość poza [min,max] jest odrzucana i pole wraca do zapisanej).
-                                    if p.control != "toggle": LineEdit {
+                                    if p.control == "slider": LineEdit {
                                         width: 56px;
                                         horizontal-alignment: center;
                                         input-type: number;
@@ -539,28 +555,31 @@ export component AppWindow inherits Window {
                                         Tooltip { text: @markdown("\{root.t-tip-value}"); }
                                     }
                                     // Fizyczna wartość (dB/Hz), gdy znany wzór — obok pola.
-                                    if p.control != "toggle" && p.display != "": Text {
+                                    if p.control == "slider" && p.display != "": Text {
                                         width: 60px;
                                         text: p.display;
                                         color: #9a9aa6;
                                         font-size: 11px;
                                         vertical-alignment: center;
                                     }
-                                    if p.control != "toggle": Button {
+                                    if p.control == "slider": Button {
                                         width: 30px;
                                         text: "−";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1, p.midi-cc); }
                                         Tooltip { text: @markdown("\{root.t-tip-dec}"); }
                                     }
-                                    if p.control != "toggle": Button {
+                                    if p.control == "slider": Button {
                                         width: 30px;
                                         text: "+";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1, p.midi-cc); }
                                         Tooltip { text: @markdown("\{root.t-tip-inc}"); }
                                     }
                                     Text {
-                                        text: p.minimum + "…" + p.maximum
-                                            + (p.unit == "" ? "" : " " + p.unit)
+                                        // Zakres tylko dla suwaka (dla enum/toggle „0…255" myli);
+                                        // CC (gdy znane) zawsze — istotne dla edycji na żywo.
+                                        text: (p.control == "slider"
+                                                ? p.minimum + "…" + p.maximum + (p.unit == "" ? "" : " " + p.unit)
+                                                : "")
                                             + (p.midi-cc >= 0 ? "  CC" + p.midi-cc : "");
                                         color: #6a6a76;
                                         font-size: 11px;

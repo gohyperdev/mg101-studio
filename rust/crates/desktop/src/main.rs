@@ -154,6 +154,8 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                     midi_cc: p.midi_cc as i32,
                     confirmed: p.confirmed,
                     display: p.display.clone().into(),
+                    enum_label: p.enum_label.clone().into(),
+                    enum_next: p.enum_next as i32,
                 })
                 .collect();
             let opts = vm.models(&b.block);
@@ -216,6 +218,7 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_tip_delete(l("tip.delete"));
     ui.set_t_tip_revert(l("tip.revert"));
     ui.set_t_tip_copy_library(l("tip.copy_library"));
+    ui.set_t_tip_toggle(l("tip.toggle"));
     ui.set_t_empty_slot(l("slot.empty"));
     ui.set_t_rev(l("editor.rev"));
     ui.set_t_settings(l("inspector.settings"));

@@ -31,6 +31,18 @@ pub struct Parameter {
     /// Wzór przeliczenia wartości surowej (0..100) na fizyczną (dB/Hz), jeśli znany.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_transform: Option<String>,
+    /// Parametr wyliczeniowy (enum): skończony zbiór stanów o WŁASNYCH wartościach
+    /// surowych (niekoniecznie 0/1). Np. POSITION = PRECEDE(1)/POSTERIOR(128).
+    /// Pusty = parametr ciągły/logiczny wg `raw_range`/`ui_element_types`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<ParamValue>,
+}
+
+/// Jeden stan parametru wyliczeniowego: surowa wartość + etykieta do UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamValue {
+    pub value: i64,
+    pub label: String,
 }
 
 /// Typ kontrolki UI dla parametru — sterowany danymi katalogu (ADR-0002).
@@ -40,6 +52,8 @@ pub enum Control {
     Slider,
     /// Przełącznik dwustanowy (0/1).
     Toggle,
+    /// Wyliczenie: skończony zbiór stanów o własnych wartościach (patrz `values`).
+    Enum,
 }
 
 impl Control {
@@ -48,6 +62,7 @@ impl Control {
         match self {
             Control::Slider => "slider",
             Control::Toggle => "toggle",
+            Control::Enum => "enum",
         }
     }
 }
@@ -70,14 +85,39 @@ impl Parameter {
         self.display_name.as_deref().unwrap_or(&self.name)
     }
 
-    /// Kontrolka wg danych katalogu: przełącznik gdy UET=7 lub zakres 0..1.
+    /// Kontrolka wg danych katalogu: enum gdy zdefiniowano `values`, przełącznik
+    /// gdy UET=7 lub zakres 0..1, inaczej suwak.
     pub fn control(&self) -> Control {
-        if self.ui_element_types.contains(&UET_TOGGLE)
+        if !self.values.is_empty() {
+            Control::Enum
+        } else if self.ui_element_types.contains(&UET_TOGGLE)
             || (self.minimum() == 0 && self.maximum() == 1)
         {
             Control::Toggle
         } else {
             Control::Slider
+        }
+    }
+
+    /// Etykieta stanu enuma dla wartości surowej (np. 1→"PRECEDE"). Nieznana
+    /// wartość → sama liczba (bezpieczne dla nietypowych bajtów).
+    pub fn enum_label(&self, raw: i64) -> String {
+        self.values
+            .iter()
+            .find(|v| v.value == raw)
+            .map(|v| v.label.clone())
+            .unwrap_or_else(|| raw.to_string())
+    }
+
+    /// Następny stan enuma (cykl) względem wartości surowej — do przełącznika.
+    /// Nieznana bieżąca wartość → pierwszy zdefiniowany stan.
+    pub fn enum_next(&self, raw: i64) -> i64 {
+        if self.values.is_empty() {
+            return raw;
+        }
+        match self.values.iter().position(|v| v.value == raw) {
+            Some(i) => self.values[(i + 1) % self.values.len()].value,
+            None => self.values[0].value,
         }
     }
 

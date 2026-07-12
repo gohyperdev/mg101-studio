@@ -100,6 +100,7 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
             "Type a value (range shown) and press Enter",
         ),
         ("tip.inc", "Zwiększ o 1", "Increase by 1"),
+        ("tip.toggle", "Przełącz stan", "Toggle state"),
         ("tip.dec", "Zmniejsz o 1", "Decrease by 1"),
         ("tip.import", "Importuj patch z pliku .mg101patch", "Import a patch from a .mg101patch file"),
         (

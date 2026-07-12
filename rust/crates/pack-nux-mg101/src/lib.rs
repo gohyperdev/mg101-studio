@@ -135,6 +135,29 @@ mod tests {
     }
 
     #[test]
+    fn pl_position_is_enum_precede_1_posterior_128() {
+        // Zmierzone empirycznie: PRECEDE=1 (export użytkownika), POSTERIOR=128
+        // (0x80, domyślne we wszystkich 36 patchach fabrycznych). To 2-stanowy enum
+        // o własnych wartościach — musi renderować się jako toggle, nie suwak.
+        use mg101_core::effect_catalog::Control;
+        let (_, c) = load().unwrap();
+        let pl = c.model("sr", 1).expect("P.L");
+        let pos = pl
+            .parameters
+            .iter()
+            .find(|p| p.name == "patch_level_position")
+            .expect("patch_level_position");
+        assert_eq!(pos.control(), Control::Enum, "POSITION = enum (toggle)");
+        assert_eq!(pos.enum_label(1), "PRECEDE");
+        assert_eq!(pos.enum_label(128), "POSTERIOR");
+        assert_eq!(pos.enum_next(1), 128, "PRECEDE → POSTERIOR");
+        assert_eq!(pos.enum_next(128), 1, "POSTERIOR → PRECEDE (cykl)");
+        // LEVEL: fizyczne dB (50 = 0 dB).
+        let lvl = pl.parameters.iter().find(|p| p.name == "patch_level").unwrap();
+        assert_eq!(lvl.display_value(50).as_deref(), Some("+0.0 dB"));
+    }
+
+    #[test]
     fn oracle_splits_into_36_records() {
         let p = profile();
         let records = Container::split(ORACLE, p.record_size).expect("split OK");

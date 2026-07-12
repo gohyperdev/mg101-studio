@@ -78,6 +78,10 @@ pub struct ParamRow {
     pub confirmed: bool,
     /// Wartość fizyczna (np. `+3.6 dB`, `245 Hz`), pusta gdy brak wzoru.
     pub display: String,
+    /// Enum: etykieta bieżącego stanu (np. `PRECEDE`), pusta dla nie-enumów.
+    pub enum_label: String,
+    /// Enum: wartość surowa następnego stanu (cykl) — do przełącznika.
+    pub enum_next: i64,
 }
 
 /// Blok w łańcuchu efektów (widok edytora).
@@ -759,6 +763,8 @@ fn block_from_json(v: &Value) -> BlockRow {
                         midi_cc: p.get("midi_cc").and_then(Value::as_i64).unwrap_or(-1),
                         confirmed: p.get("confirmed").and_then(Value::as_bool).unwrap_or(true),
                         display: s("display"),
+                        enum_label: s("enum_label"),
+                        enum_next: p.get("enum_next").and_then(Value::as_i64).unwrap_or(0),
                     }
                 })
                 .collect()

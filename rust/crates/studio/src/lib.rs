@@ -382,6 +382,10 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                                     "confirmed": param.is_confirmed(),
                                     // Wartość fizyczna (dB/Hz), gdy znany wzór (W3 uzupełnienie).
                                     "display": param.display_value(raw),
+                                    // Enum (np. POSITION): etykieta bieżącego stanu + wartość
+                                    // następnego stanu (do przełącznika/toggle).
+                                    "enum_label": param.enum_label(raw),
+                                    "enum_next": param.enum_next(raw),
                                 })
                             })
                             .collect()
