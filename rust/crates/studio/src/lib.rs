@@ -374,6 +374,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                                     "name": param.name,
                                     "label": param.label(),
                                     "value": raw,
+                                    "offset": param.file_offset,
                                     "minimum": param.minimum(),
                                     "maximum": param.maximum(),
                                     "control": param.control().as_str(),

@@ -25,6 +25,7 @@ export struct ParamRowUi {
     display: string, // wartość fizyczna (dB/Hz), pusta gdy brak wzoru
     enum-label: string, // enum: etykieta bieżącego stanu (np. PRECEDE)
     enum-next: int,     // enum: wartość surowa następnego stanu (do toggle)
+    addr: string,       // offset bajtu w hex (np. "0x0029") — spina z Binary/Changes
 }
 
 export struct BlockRowUi {
@@ -577,10 +578,13 @@ export component AppWindow inherits Window {
                                     Text {
                                         // Zakres tylko dla suwaka (dla enum/toggle „0…255" myli);
                                         // CC (gdy znane) zawsze — istotne dla edycji na żywo.
+                                        // Zakres (suwak) + CC (MIDI) + offset bajtu (spina z
+                                        // panelami Binary/Changes, które adresują po offsecie).
                                         text: (p.control == "slider"
                                                 ? p.minimum + "…" + p.maximum + (p.unit == "" ? "" : " " + p.unit)
                                                 : "")
-                                            + (p.midi-cc >= 0 ? "  CC" + p.midi-cc : "");
+                                            + (p.midi-cc >= 0 ? "  CC" + p.midi-cc : "")
+                                            + (p.addr == "" ? "" : "  " + p.addr);
                                         color: #6a6a76;
                                         font-size: 11px;
                                         vertical-alignment: center;

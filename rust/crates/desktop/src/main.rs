@@ -156,6 +156,11 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                     display: p.display.clone().into(),
                     enum_label: p.enum_label.clone().into(),
                     enum_next: p.enum_next as i32,
+                    addr: if p.offset >= 0 {
+                        format!("0x{:04x}", p.offset).into()
+                    } else {
+                        SharedString::new()
+                    },
                 })
                 .collect();
             let opts = vm.models(&b.block);
