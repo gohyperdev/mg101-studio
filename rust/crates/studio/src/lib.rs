@@ -318,17 +318,38 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
     // --- Odczyt ---
 
     fn list_patches(&self) -> Result<Value, ExecError> {
-        let mut out = Vec::new();
-        for (i, p) in self.store.all().iter().enumerate() {
-            let name = self.record(p).map(|r| r.name()).unwrap_or_default();
-            out.push(json!({
-                "patchID": p.id,
-                "slot": i + 1,
-                "name": name,
-                "origin": format!("{:?}", p.origin),
-                "revision": p.revision,
-            }));
-        }
+        // Kolejność Biblioteki: alfabetycznie po nazwie patcha (a nie po technicznym
+        // ID, jak zwraca magazyn `ORDER BY id` — to dawało „losową" kolejność:
+        // import-<hash>, device-…, -copy-…). `slot` to pozycja w tym porządku.
+        // Zakładki User/Factory idą osobno po indeksie slotu urządzenia (1A..9D).
+        let mut items: Vec<(String, String, String, u64)> = self
+            .store
+            .all()
+            .iter()
+            .map(|p| {
+                let name = self.record(p).map(|r| r.name()).unwrap_or_default();
+                (name, p.id.clone(), format!("{:?}", p.origin), p.revision)
+            })
+            .collect();
+        // Stabilnie: po nazwie (bez rozróżniania wielkości), remis rozstrzyga ID.
+        items.sort_by(|a, b| {
+            a.0.to_lowercase()
+                .cmp(&b.0.to_lowercase())
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        let out: Vec<Value> = items
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, id, origin, revision))| {
+                json!({
+                    "patchID": id,
+                    "slot": i + 1,
+                    "name": name,
+                    "origin": origin,
+                    "revision": revision,
+                })
+            })
+            .collect();
         Ok(Value::Array(out))
     }
 

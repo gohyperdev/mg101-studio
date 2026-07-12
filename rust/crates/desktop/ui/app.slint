@@ -150,7 +150,7 @@ export component AppWindow inherits Window {
     callback select(string);
     callback set-name(string, int, string);            // id, rev, text
     callback set-bpm(string, int, string);             // id, rev, text
-    callback set-param(string, int, string, string, float); // id, rev, block, param, value
+    callback set-param(string, int, string, string, float, int); // id, rev, block, param, value, midi-cc
     callback set-bypass(string, int, string, bool);    // id, rev, block, bypassed
     callback duplicate(string, int);                   // id, rev
     callback delete-patch(string, int);                // id, rev
@@ -469,15 +469,15 @@ export component AppWindow inherits Window {
                                     }
                                     if p.control == "toggle": Button {
                                         text: p.value == 0 ? "→ ON" : "→ OFF";
-                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value == 0 ? 1 : 0); }
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value == 0 ? 1 : 0, p.midi-cc); }
                                     }
                                     if p.control != "toggle": Button {
                                         text: "−";
-                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1); }
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1, p.midi-cc); }
                                     }
                                     if p.control != "toggle": Button {
                                         text: "+";
-                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1); }
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1, p.midi-cc); }
                                     }
                                     Text {
                                         text: p.minimum + "…" + p.maximum

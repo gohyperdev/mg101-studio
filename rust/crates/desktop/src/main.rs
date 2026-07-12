@@ -95,6 +95,13 @@ fn slot_label(index: u16) -> String {
     format!("{}{}", index / 4 + 1, LETTERS[(index % 4) as usize])
 }
 
+/// Index slotu User dla patcha otwartego z urządzenia (`device-user-<n>`), jeśli
+/// to taki patch. Służy do bramkowania edycji na żywo: CC wysyłamy tylko, gdy
+/// edytowany patch jest AKTYWNYM presetem User na urządzeniu.
+fn device_user_index(id: &str) -> Option<i32> {
+    id.strip_prefix("device-user-")?.parse().ok()
+}
+
 fn empty_detail() -> DetailUi {
     DetailUi {
         id: SharedString::new(),
@@ -512,9 +519,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wire!(on_set_bypass, |vm, id, rev, block, on| {
         vm.set_bypass(&id, rev as i64, &block, on);
     });
-    wire!(on_set_param, |vm, id, rev, block, param, value| {
-        vm.set_parameter(&id, rev as i64, &block, &param, value.round() as i64);
-    });
+    // Edycja parametru — z trybem interaktywnym: po udanej zmianie aktywnego
+    // presetu User wysyłamy Control Change na urządzenie (edycja na żywo). Poza
+    // `wire!`, bo potrzebujemy uchwytu sesji sync i wartości CC.
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let psync = presync.clone();
+        let aslot = active_slot.clone();
+        ui.on_set_param(move |id, rev, block, param, value, midi_cc| {
+            let Some(ui) = uw.upgrade() else { return };
+            let raw = value.round() as i64;
+            let ok = vmc
+                .borrow_mut()
+                .set_parameter(&id, rev as i64, &block, &param, raw);
+            // Sync na żywo: tylko gdy zapis się powiódł (raw = wartość zapisana,
+            // w zakresie), patch to aktywny preset User, i sesja MIDI działa.
+            if ok && midi_cc >= 0 && (0..=127).contains(&raw) {
+                if let Some(idx) = device_user_index(&id) {
+                    if idx == *aslot.borrow() {
+                        if let Some(s) = psync.borrow().as_ref() {
+                            s.send_cc(midi_cc as u8, raw as u8);
+                        }
+                    }
+                }
+            }
+            refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
     wire!(on_save_settings, |vm, pidx, endpoint, model, key| {
         let provider = if pidx == 1 {
             Provider::OpenAiCompatible
@@ -874,7 +906,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::slot_label;
+    use super::{device_user_index, slot_label};
+
+    #[test]
+    fn device_user_index_parses_only_user_device_ids() {
+        assert_eq!(device_user_index("device-user-0"), Some(0));
+        assert_eq!(device_user_index("device-user-35"), Some(35));
+        assert_eq!(device_user_index("device-factory-3"), None);
+        assert_eq!(device_user_index("import-deadbeef"), None);
+        assert_eq!(device_user_index("device-user-"), None);
+    }
 
     #[test]
     fn slot_label_maps_index_to_footswitch_1a_9d() {

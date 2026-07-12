@@ -159,7 +159,7 @@ pub enum SyncEvent {
 /// do tego samego portu współistnieją (nasłuch presetu nie koliduje ze zrzutem).
 pub struct PresetSync {
     events: Receiver<SyncEvent>,
-    cmd_tx: Sender<u8>,
+    cmd_tx: Sender<Vec<u8>>,
 }
 
 impl PresetSync {
@@ -167,7 +167,7 @@ impl PresetSync {
     /// Zwraca błąd, jeśli portu nie udało się otworzyć (fail-fast, rendez-vous).
     pub fn start(needle: &'static str) -> Result<Self, LinkError> {
         let (ev_tx, events) = channel::<SyncEvent>();
-        let (cmd_tx, cmd_rx) = channel::<u8>();
+        let (cmd_tx, cmd_rx) = channel::<Vec<u8>>();
         let (open_tx, open_rx) = channel::<Result<(), LinkError>>();
         thread::spawn(move || {
             let mut link = match MidirLink::open(needle) {
@@ -182,11 +182,12 @@ impl PresetSync {
             };
             let mut asm = SysexAssembler::new();
             loop {
-                // Wychodzące: wybór presetu z aplikacji → Program Change `C0 n`.
+                // Wychodzące: surowe komunikaty MIDI z aplikacji (Program Change
+                // przy wyborze presetu, Control Change przy edycji na żywo).
                 loop {
                     match cmd_rx.try_recv() {
-                        Ok(n) => {
-                            let _ = link.send(&[0xC0, n & 0x7F]);
+                        Ok(msg) => {
+                            let _ = link.send(&msg);
                         }
                         Err(TryRecvError::Empty) => break,
                         // Uchwyt porzucony (PresetSync zniknął) → kończymy wątek.
@@ -218,7 +219,15 @@ impl PresetSync {
 
     /// Zgłasza wybór presetu w aplikacji → wysyła `C0 <slot>` na urządzenie.
     pub fn select(&self, slot: u16) {
-        let _ = self.cmd_tx.send((slot & 0x7F) as u8);
+        let _ = self.cmd_tx.send(vec![0xC0, (slot & 0x7F) as u8]);
+    }
+
+    /// Edycja na żywo: wysyła Control Change `B0 <cc> <value>` na urządzenie, by
+    /// natychmiast zmienić brzmienie aktualnie aktywnego presetu (mapa CC katalogu).
+    pub fn send_cc(&self, cc: u8, value: u8) {
+        let _ = self
+            .cmd_tx
+            .send(vec![0xB0, cc & 0x7F, value.min(127)]);
     }
 }
 

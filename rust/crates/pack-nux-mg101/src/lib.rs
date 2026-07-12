@@ -118,6 +118,23 @@ mod tests {
     }
 
     #[test]
+    fn eq_models_have_band_labels() {
+        // 6-EQ i 10-EQ: parametry mają nazwy pasm (nie „parameter_N"). Semantyka
+        // wywnioskowana z manuala MG-30 → oznaczona jako niepotwierdzona (marker ≈).
+        let (_, c) = load().unwrap();
+        let six = c.model("eq", 1).expect("6-EQ");
+        assert_eq!(six.parameters.len(), 6);
+        assert_eq!(six.parameters[0].label(), "100 Hz");
+        assert_eq!(six.parameters[5].label(), "6.4 kHz");
+        assert!(!six.parameters[0].is_confirmed(), "semantyka pasm = inferred");
+        let ten = c.model("eq", 2).expect("10-EQ");
+        assert_eq!(ten.parameters.len(), 12);
+        assert_eq!(ten.parameters[0].label(), "31 Hz");
+        assert_eq!(ten.parameters[9].label(), "16 kHz");
+        assert_eq!(ten.parameters[10].label(), "Volume");
+    }
+
+    #[test]
     fn oracle_splits_into_36_records() {
         let p = profile();
         let records = Container::split(ORACLE, p.record_size).expect("split OK");

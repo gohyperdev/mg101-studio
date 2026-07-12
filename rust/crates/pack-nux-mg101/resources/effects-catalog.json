@@ -4194,14 +4194,14 @@
        "file_offset": 41,
        "file_offset_hex": "0x29",
        "language_key": null,
-       "display_name": null,
+       "display_name": "100 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4213,14 +4213,14 @@
        "file_offset": 42,
        "file_offset_hex": "0x2A",
        "language_key": null,
-       "display_name": null,
+       "display_name": "220 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4232,14 +4232,14 @@
        "file_offset": 43,
        "file_offset_hex": "0x2B",
        "language_key": null,
-       "display_name": null,
+       "display_name": "500 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4251,14 +4251,14 @@
        "file_offset": 44,
        "file_offset_hex": "0x2C",
        "language_key": null,
-       "display_name": null,
+       "display_name": "1.2 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4270,14 +4270,14 @@
        "file_offset": 45,
        "file_offset_hex": "0x2D",
        "language_key": null,
-       "display_name": null,
+       "display_name": "2.6 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4289,14 +4289,14 @@
        "file_offset": 46,
        "file_offset_hex": "0x2E",
        "language_key": null,
-       "display_name": null,
+       "display_name": "6.4 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4317,14 +4317,14 @@
        "file_offset": 41,
        "file_offset_hex": "0x29",
        "language_key": null,
-       "display_name": null,
+       "display_name": "31 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4336,14 +4336,14 @@
        "file_offset": 42,
        "file_offset_hex": "0x2A",
        "language_key": null,
-       "display_name": null,
+       "display_name": "63 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4355,14 +4355,14 @@
        "file_offset": 43,
        "file_offset_hex": "0x2B",
        "language_key": null,
-       "display_name": null,
+       "display_name": "125 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4374,14 +4374,14 @@
        "file_offset": 44,
        "file_offset_hex": "0x2C",
        "language_key": null,
-       "display_name": null,
+       "display_name": "250 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4393,14 +4393,14 @@
        "file_offset": 45,
        "file_offset_hex": "0x2D",
        "language_key": null,
-       "display_name": null,
+       "display_name": "500 Hz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4412,14 +4412,14 @@
        "file_offset": 46,
        "file_offset_hex": "0x2E",
        "language_key": null,
-       "display_name": null,
+       "display_name": "1 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4431,14 +4431,14 @@
        "file_offset": 47,
        "file_offset_hex": "0x2F",
        "language_key": null,
-       "display_name": null,
+       "display_name": "2 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4450,14 +4450,14 @@
        "file_offset": 48,
        "file_offset_hex": "0x30",
        "language_key": null,
-       "display_name": null,
+       "display_name": "4 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4469,14 +4469,14 @@
        "file_offset": 49,
        "file_offset_hex": "0x31",
        "language_key": null,
-       "display_name": null,
+       "display_name": "8 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4488,14 +4488,14 @@
        "file_offset": 50,
        "file_offset_hex": "0x32",
        "language_key": null,
-       "display_name": null,
+       "display_name": "16 kHz",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4507,14 +4507,14 @@
        "file_offset": 51,
        "file_offset_hex": "0x33",
        "language_key": null,
-       "display_name": null,
+       "display_name": "Volume",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
@@ -4526,14 +4526,14 @@
        "file_offset": 52,
        "file_offset_hex": "0x34",
        "language_key": null,
-       "display_name": null,
+       "display_name": "Gain",
        "raw_range": [
         0,
         100
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "unknown",
+       "semantic_confidence": "inferred",
        "ui_element_types": [
         3
        ]
