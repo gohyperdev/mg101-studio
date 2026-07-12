@@ -108,6 +108,8 @@ export component AppWindow inherits Window {
     in property <[string]> device-models;  // lista modeli z rejestru (dropdown w nagłówku)
     in property <int> device-index;        // wybrany model urządzenia w dropdownie
     in property <bool> qt-running;         // QuickTone działa równolegle (ostrzeżenie sync)
+    in property <string> midi-log;         // bufor monitora MIDI (linie)
+    in property <bool> midi-monitor-on;    // nasłuch monitora włączony
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -190,6 +192,9 @@ export component AppWindow inherits Window {
     callback open-slot(string, int);                   // W2: otwórz slot (bank, index) w edytorze
     callback select-device(int);                       // W6: wybór modelu urządzenia z dropdownu
     callback copy-to-library();                        // kopiuj otwarty slot urządzenia do Biblioteki
+    callback toggle-midi-monitor();                    // monitor MIDI: włącz/wyłącz
+    callback clear-midi-log();                         // monitor MIDI: wyczyść
+    callback save-midi-log();                          // monitor MIDI: zapisz do pliku
 
     VerticalBox {
         padding: 0px;
@@ -776,6 +781,48 @@ export component AppWindow inherits Window {
                     Tab {
                         title: root.t-mcp;
                         Text { text: "stdio: mg101-mcp"; color: #8a8a96; wrap: word-wrap; }
+                    }
+                    Tab {
+                        title: "MIDI";
+                        VerticalBox {
+                            padding: 6px;
+                            spacing: 6px;
+                            HorizontalBox {
+                                spacing: 6px;
+                                alignment: start;
+                                Button {
+                                    text: root.midi-monitor-on ? "⏸ Stop" : "▶ Nasłuch";
+                                    primary: root.midi-monitor-on;
+                                    clicked => { root.toggle-midi-monitor(); }
+                                }
+                                Button {
+                                    text: "Wyczyść";
+                                    clicked => { root.clear-midi-log(); }
+                                }
+                                Button {
+                                    text: "Zapisz…";
+                                    clicked => { root.save-midi-log(); }
+                                }
+                            }
+                            Text {
+                                text: root.device-connected
+                                    ? (root.midi-monitor-on ? "Nasłuch aktywny — operuj urządzeniem" : "Włącz nasłuch i operuj urządzeniem")
+                                    : "Podłącz urządzenie, by nasłuchiwać MIDI";
+                                color: #8a8a96;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                Text {
+                                    text: root.midi-log == "" ? "(brak komunikatów)" : root.midi-log;
+                                    color: #c4c4cc;
+                                    font-family: "monospace";
+                                    font-size: 12px;
+                                    wrap: no-wrap;
+                                }
+                            }
+                        }
                     }
                     Tab {
                         title: root.t-settings;

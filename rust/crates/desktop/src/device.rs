@@ -173,6 +173,7 @@ pub enum SyncEvent {
 /// do tego samego portu współistnieją (nasłuch presetu nie koliduje ze zrzutem).
 pub struct PresetSync {
     events: Receiver<SyncEvent>,
+    monitor: Receiver<Vec<u8>>,
     cmd_tx: Sender<Vec<u8>>,
 }
 
@@ -181,6 +182,7 @@ impl PresetSync {
     /// Zwraca błąd, jeśli portu nie udało się otworzyć (fail-fast, rendez-vous).
     pub fn start(needle: &'static str) -> Result<Self, LinkError> {
         let (ev_tx, events) = channel::<SyncEvent>();
+        let (mon_tx, monitor) = channel::<Vec<u8>>();
         let (cmd_tx, cmd_rx) = channel::<Vec<u8>>();
         let (open_tx, open_rx) = channel::<Result<(), LinkError>>();
         thread::spawn(move || {
@@ -208,19 +210,28 @@ impl PresetSync {
                         Err(TryRecvError::Disconnected) => return,
                     }
                 }
-                // Przychodzące: ramkujemy strumień i wykrywamy Program Change.
+                // Przychodzące: ramkujemy strumień, wykrywamy Program Change oraz
+                // przekazujemy KAŻDY komunikat do monitora (poza realtime clock F8).
                 for msg in link.poll() {
                     for framed in asm.push(&msg) {
+                        if framed == [0xF8] {
+                            continue;
+                        }
                         if framed.len() == 2 && (framed[0] & 0xF0) == 0xC0 {
                             let _ = ev_tx.send(SyncEvent::PresetChanged(framed[1]));
                         }
+                        let _ = mon_tx.send(framed);
                     }
                 }
                 thread::sleep(Duration::from_millis(15));
             }
         });
         match open_rx.recv() {
-            Ok(Ok(())) => Ok(Self { events, cmd_tx }),
+            Ok(Ok(())) => Ok(Self {
+                events,
+                monitor,
+                cmd_tx,
+            }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(LinkError::NotConnected),
         }
@@ -229,6 +240,12 @@ impl PresetSync {
     /// Odbiera oczekujące zdarzenia (nieblokująco).
     pub fn poll(&self) -> Vec<SyncEvent> {
         self.events.try_iter().collect()
+    }
+
+    /// Odbiera surowe komunikaty MIDI do monitora (nieblokująco). Wywoływać co
+    /// tick, by kanał się nie zapychał — gdy monitor wyłączony, wynik odrzucić.
+    pub fn poll_monitor(&self) -> Vec<Vec<u8>> {
+        self.monitor.try_iter().collect()
     }
 
     /// Zgłasza wybór presetu w aplikacji → wysyła `C0 <slot>` na urządzenie.

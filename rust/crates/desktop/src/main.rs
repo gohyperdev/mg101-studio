@@ -102,6 +102,23 @@ fn device_user_index(id: &str) -> Option<i32> {
     id.strip_prefix("device-user-")?.parse().ok()
 }
 
+/// Czytelny opis komunikatu MIDI do monitora (CC/PC/SysEx + hex).
+fn describe_midi(msg: &[u8]) -> String {
+    let hex: Vec<String> = msg.iter().map(|b| format!("{b:02X}")).collect();
+    let hex = hex.join(" ");
+    let tag = match msg.first() {
+        Some(&s) if (0xB0..=0xBF).contains(&s) && msg.len() >= 3 => {
+            format!("CC{} = {} (kan {})", msg[1], msg[2], s & 0x0F)
+        }
+        Some(&s) if (0xC0..=0xCF).contains(&s) && msg.len() >= 2 => {
+            format!("PC {} (kan {})", msg[1], s & 0x0F)
+        }
+        Some(0xF0) => format!("SysEx {} B", msg.len()),
+        _ => "inny".to_string(),
+    };
+    format!("{tag:20}  [{hex}]")
+}
+
 fn empty_detail() -> DetailUi {
     DetailUi {
         id: SharedString::new(),
@@ -476,6 +493,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Czy pierwszy automatyczny Fetch wykonano dla bieżącego połączenia (reset przy
     // odłączeniu). Po wykryciu urządzenia pobieramy banki raz, bez klikania.
     let auto_fetched: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    // Monitor MIDI (zakładka MIDI): włącznik + bufor linii (do wyświetlenia/zapisu).
+    let midi_mon_on: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let midi_log: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -728,6 +748,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Monitor MIDI: włącz/wyłącz nasłuch wszystkich komunikatów.
+    {
+        let uw = ui.as_weak();
+        let mon = midi_mon_on.clone();
+        ui.on_toggle_midi_monitor(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let on = !*mon.borrow();
+            *mon.borrow_mut() = on;
+            ui.set_midi_monitor_on(on);
+        });
+    }
+    // Monitor MIDI: wyczyść bufor.
+    {
+        let uw = ui.as_weak();
+        let mlog = midi_log.clone();
+        ui.on_clear_midi_log(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            mlog.borrow_mut().clear();
+            ui.set_midi_log("".into());
+        });
+    }
+    // Monitor MIDI: zapis logu do pliku (dialog rfd — ścieżka poza pożyczeniem VM).
+    {
+        let uw = ui.as_weak();
+        let mlog = midi_log.clone();
+        ui.on_save_midi_log(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let picked = rfd::FileDialog::new()
+                .add_filter("Log tekstowy", &["txt", "log"])
+                .set_file_name("midi-monitor.txt")
+                .save_file();
+            if let Some(path) = picked {
+                let body = mlog.borrow().join("\n");
+                if let Err(e) = std::fs::write(&path, body) {
+                    eprintln!("Zapis logu MIDI nieudany: {e}");
+                } else {
+                    ui.set_dump_status(format!("zapisano log MIDI: {}", path.display()).into());
+                }
+            }
+        });
+    }
+
     // Zmiana języka: przelicz etykiety + odśwież.
     {
         let uw = ui.as_weak();
@@ -834,6 +896,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let psync = presync.clone();
         let aslot = active_slot.clone();
         let afetch = auto_fetched.clone();
+        let mon_on = midi_mon_on.clone();
+        let mlog = midi_log.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
@@ -925,6 +989,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             refresh(&ui, &mut vmc.borrow_mut());
                         }
                     }
+                }
+            }
+            // Monitor MIDI: zawsze drenujemy kanał (by się nie zapchał); gdy monitor
+            // włączony — formatujemy i dokładamy do bufora (cap), aktualizujemy widok.
+            {
+                let raw = psync
+                    .borrow()
+                    .as_ref()
+                    .map(|s| s.poll_monitor())
+                    .unwrap_or_default();
+                if *mon_on.borrow() && !raw.is_empty() {
+                    let mut log = mlog.borrow_mut();
+                    for m in &raw {
+                        log.push(describe_midi(m));
+                    }
+                    // Ogranicz bufor (ostatnie 2000 linii) — długi nasłuch nie rośnie bez końca.
+                    let len = log.len();
+                    if len > 2000 {
+                        log.drain(0..len - 2000);
+                    }
+                    ui.set_midi_log(log.join("\n").into());
                 }
             }
             if dslot.borrow().is_none() {
