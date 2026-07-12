@@ -121,6 +121,25 @@ impl Parameter {
         }
     }
 
+    /// Etykiety wszystkich stanów enuma (model dropdownu).
+    pub fn enum_labels(&self) -> Vec<String> {
+        self.values.iter().map(|v| v.label.clone()).collect()
+    }
+
+    /// Wartości surowe wszystkich stanów enuma (równoległe do `enum_labels`).
+    pub fn enum_values(&self) -> Vec<i64> {
+        self.values.iter().map(|v| v.value).collect()
+    }
+
+    /// Indeks bieżącego stanu enuma w liście (do dropdownu); −1 gdy nieznany.
+    pub fn enum_index(&self, raw: i64) -> i64 {
+        self.values
+            .iter()
+            .position(|v| v.value == raw)
+            .map(|i| i as i64)
+            .unwrap_or(-1)
+    }
+
     /// Czy semantyka i zapis są potwierdzone (nie „inferred/unknown").
     /// Brak pola pewności traktujemy jako potwierdzony (starsze wpisy).
     pub fn is_confirmed(&self) -> bool {

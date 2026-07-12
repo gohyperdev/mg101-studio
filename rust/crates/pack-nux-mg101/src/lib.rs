@@ -158,6 +158,24 @@ mod tests {
     }
 
     #[test]
+    fn cab_position_is_enum_edge_middle_center() {
+        use mg101_core::effect_catalog::Control;
+        let (_, c) = load().unwrap();
+        // Występuje w każdym z 27 modeli cab — sprawdzamy reprezentatywny.
+        let cab = c.model("cab", 1).expect("cab model 1");
+        let pos = cab
+            .parameters
+            .iter()
+            .find(|p| p.name == "position")
+            .expect("position");
+        assert_eq!(pos.control(), Control::Enum);
+        assert_eq!(pos.enum_labels(), vec!["Edge", "Middle", "Center"]);
+        assert_eq!(pos.enum_values(), vec![0, 1, 2]);
+        assert_eq!(pos.enum_index(1), 1);
+        assert_eq!(pos.enum_index(144), -1, "nieznana wartość → -1 (pokaż surową)");
+    }
+
+    #[test]
     fn oracle_splits_into_36_records() {
         let p = profile();
         let records = Container::split(ORACLE, p.record_size).expect("split OK");

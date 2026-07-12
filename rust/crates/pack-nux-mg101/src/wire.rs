@@ -171,13 +171,14 @@ pub fn decode_slot(payload: &[u8]) -> Result<Vec<u8>, WireError> {
     for &(off, fi, ch) in NAME_MAP {
         file[off] = frame(payload, fi, ch);
     }
-    // POSITION (P.L, offset 0x5d): wire koduje POSTERIOR jako 0, a format pliku
-    // .mg101patch jako 128 (0x80). Tłumaczymy, by import z urządzenia pokazywał
-    // POSTERIOR/PRECEDE spójnie z plikiem (PRECEDE = 1 w obu). Zweryfikowane
-    // bajt-w-bajt: POSTERIOR (wire 0 → plik 128) na 36 patchach fabrycznych.
-    // PRECEDE (wire 1 → plik 1) wywnioskowane z symetrii — do potwierdzenia
-    // zrzutem presetu ustawionego na PRECEDE na sprzęcie.
-    if file[0x5d] == 0 {
+    // POSITION (P.L, offset 0x5d): format pliku .mg101patch koduje PRECEDE=1,
+    // POSTERIOR=128 (0x80). W rekordzie wire POSTERIOR to 0 (zweryfikowane
+    // bajt-w-bajt na 36 patchach fabrycznych), a pole bywa też nieobecne/inaczej
+    // kodowane. Normalizujemy do prawidłowego stanu enuma: PRECEDE(1) zostaje,
+    // WSZYSTKO inne → POSTERIOR(128, domyślne). Dzięki temu import z urządzenia
+    // nigdy nie pokazuje surowego 0. (PRECEDE z wire = 1 wywnioskowane; do
+    // potwierdzenia zrzutem presetu PRECEDE ze sprzętu.)
+    if file[0x5d] != 1 {
         file[0x5d] = 128;
     }
     Ok(file)

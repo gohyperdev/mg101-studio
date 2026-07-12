@@ -6394,7 +6394,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6493,7 +6508,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6592,7 +6622,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6691,7 +6736,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6790,7 +6850,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6889,7 +6964,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -6988,7 +7078,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7087,7 +7192,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7186,7 +7306,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7285,7 +7420,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7384,7 +7534,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7483,7 +7648,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7582,7 +7762,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7681,7 +7876,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7780,7 +7990,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7879,7 +8104,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -7978,7 +8218,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8077,7 +8332,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8176,7 +8446,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8275,7 +8560,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8374,7 +8674,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8473,7 +8788,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8572,7 +8902,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8671,7 +9016,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8770,7 +9130,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8869,7 +9244,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",
@@ -8969,7 +9359,22 @@
        ],
        "encoding": "direct_uint8",
        "storage_confidence": "confirmed",
-       "semantic_confidence": "inferred"
+       "semantic_confidence": "inferred",
+       "display_name": "POSITION",
+       "values": [
+        {
+         "value": 0,
+         "label": "Edge"
+        },
+        {
+         "value": 1,
+         "label": "Middle"
+        },
+        {
+         "value": 2,
+         "label": "Center"
+        }
+       ]
       },
       {
        "name": "level",

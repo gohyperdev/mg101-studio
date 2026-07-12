@@ -24,8 +24,11 @@ export struct ParamRowUi {
     confirmed: bool, // false = wartość/semantyka "inferred"
     display: string, // wartość fizyczna (dB/Hz), pusta gdy brak wzoru
     enum-label: string,      // enum: etykieta bieżącego stanu (np. PRECEDE)
-    enum-next: int,          // enum: wartość surowa następnego stanu (do toggle)
+    enum-next: int,          // enum: wartość surowa następnego stanu (do toggle 2-stanowego)
     enum-next-label: string, // enum: etykieta następnego stanu (napis na przycisku)
+    enum-labels: [string],   // enum: wszystkie etykiety (model dropdownu)
+    enum-values: [int],      // enum: wszystkie wartości surowe (równoległe)
+    enum-index: int,         // enum: indeks bieżącego stanu (−1 = nieznany)
     addr: string,       // offset bajtu w hex (np. "0x0029") — spina z Binary/Changes
 }
 
@@ -531,18 +534,22 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
-                                    // Enum (np. POSITION): pokazuje bieżący stan, klik cyklicznie
-                                    // ustawia następny (wartości surowe z katalogu, np. 1/128).
-                                    if p.control == "enum": Text {
-                                        width: 90px;
-                                        text: p.enum-label;
-                                        color: white;
-                                        vertical-alignment: center;
-                                    }
-                                    if p.control == "enum": Button {
-                                        text: "→ " + p.enum-next-label;
-                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.enum-next, p.midi-cc); }
+                                    // Enum (np. POSITION Edge/Middle/Center): dropdown z nazwami
+                                    // stanów; wybór ustawia własną wartość surową z katalogu.
+                                    if p.control == "enum": ComboBox {
+                                        min-width: 150px;
+                                        model: p.enum-labels;
+                                        current-index: p.enum-index;
+                                        selected(v) => {
+                                            root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.enum-values[self.current-index], p.midi-cc);
+                                        }
                                         Tooltip { text: @markdown("\{root.t-tip-toggle}"); }
+                                    }
+                                    // Nieznana wartość (poza listą) — pokaż surową obok dropdownu.
+                                    if p.control == "enum" && p.enum-index < 0: Text {
+                                        text: p.enum-label;
+                                        color: #e0a020;
+                                        vertical-alignment: center;
                                     }
                                     // Wartość toggle: przełącznik ON/OFF.
                                     if p.control == "toggle": Text {

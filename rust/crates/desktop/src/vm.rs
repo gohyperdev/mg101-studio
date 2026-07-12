@@ -84,6 +84,12 @@ pub struct ParamRow {
     pub enum_next: i64,
     /// Enum: etykieta następnego stanu (do napisu na przycisku, np. „→ PRECEDE").
     pub enum_next_label: String,
+    /// Enum: etykiety wszystkich stanów (model dropdownu).
+    pub enum_labels: Vec<String>,
+    /// Enum: wartości surowe wszystkich stanów (równoległe do `enum_labels`).
+    pub enum_values: Vec<i64>,
+    /// Enum: indeks bieżącego stanu w liście (−1 gdy nieznany).
+    pub enum_index: i64,
     /// Offset bajtu w rekordzie pliku — spina wiersz z panelami Binary/Changes.
     pub offset: i64,
 }
@@ -770,6 +776,21 @@ fn block_from_json(v: &Value) -> BlockRow {
                         enum_label: s("enum_label"),
                         enum_next: p.get("enum_next").and_then(Value::as_i64).unwrap_or(0),
                         enum_next_label: s("enum_next_label"),
+                        enum_labels: p
+                            .get("enum_labels")
+                            .and_then(Value::as_array)
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        enum_values: p
+                            .get("enum_values")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().filter_map(Value::as_i64).collect())
+                            .unwrap_or_default(),
+                        enum_index: p.get("enum_index").and_then(Value::as_i64).unwrap_or(-1),
                         offset: p.get("offset").and_then(Value::as_i64).unwrap_or(-1),
                     }
                 })

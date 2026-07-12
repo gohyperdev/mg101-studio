@@ -157,6 +157,16 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                     enum_label: p.enum_label.clone().into(),
                     enum_next: p.enum_next as i32,
                     enum_next_label: p.enum_next_label.clone().into(),
+                    enum_labels: ModelRc::new(VecModel::from(
+                        p.enum_labels
+                            .iter()
+                            .map(|s| SharedString::from(s.as_str()))
+                            .collect::<Vec<_>>(),
+                    )),
+                    enum_values: ModelRc::new(VecModel::from(
+                        p.enum_values.iter().map(|&v| v as i32).collect::<Vec<_>>(),
+                    )),
+                    enum_index: p.enum_index as i32,
                     addr: if p.offset >= 0 {
                         format!("0x{:04x}", p.offset).into()
                     } else {

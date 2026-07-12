@@ -388,6 +388,9 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                                     "enum_label": param.enum_label(raw),
                                     "enum_next": param.enum_next(raw),
                                     "enum_next_label": param.enum_label(param.enum_next(raw)),
+                                    "enum_labels": param.enum_labels(),
+                                    "enum_values": param.enum_values(),
+                                    "enum_index": param.enum_index(raw),
                                 })
                             })
                             .collect()
