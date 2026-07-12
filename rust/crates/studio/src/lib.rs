@@ -892,17 +892,24 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             )));
         }
         let mut ids = Vec::new();
-        for (i, chunk) in data.chunks(rs).enumerate() {
-            self.seq += 1;
-            let id = format!("import-{}-{}", self.seq, i);
+        for chunk in data.chunks(rs) {
             // Walidacja: rekord musi się dekodować profilem (bajty święte zachowane).
             PatchRecord::new(chunk.to_vec(), self.profile)?;
             let blob = chunk.to_vec();
+            // ID adresowane treścią: deterministyczne między sesjami (SqliteStore jest
+            // trwały, a licznik w pamięci zerował się przy restarcie → kolizje "import-1-0").
+            // Re-import tych samych bajtów jest teraz idempotentny zamiast błędu.
+            let exact_hash = mg101_library::exact_hash(&blob);
+            let id = format!("import-{}", &exact_hash[..exact_hash.len().min(16)]);
+            if self.store.get(&id).is_some() {
+                ids.push(Value::String(id));
+                continue;
+            }
             let mut patch = LibraryPatch {
                 id: id.clone(),
                 name: String::new(),
                 content_hash: String::new(),
-                exact_hash: String::new(),
+                exact_hash,
                 blob,
                 origin: PatchOrigin::ImportedFile,
                 device_id: self.profile.id.clone(),

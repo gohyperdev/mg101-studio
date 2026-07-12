@@ -52,6 +52,8 @@ export struct DetailUi {
 
 export struct SlotRowUi {
     index: int,
+    label: string,      // etykieta footswitcha: 1A..9D
+    patch-id: string,   // id patcha po otwarciu (device-<bank>-<index>) — do podświetlenia
     name: string,
     occupied: bool,
     writable: bool,
@@ -95,6 +97,8 @@ export component AppWindow inherits Window {
     in property <bool> dump-busy;
     in property <bool> dump-ready;         // jest zrzut gotowy do importu
     in property <string> dump-status;      // postęp/komunikat zrzutu
+    in property <int> active-slot: -1;     // aktywny preset na urządzeniu (index User 0..35, -1=nieznany)
+    in property <bool> device-live;        // trwałe połączenie MIDI (nasłuch presetów) aktywne
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -271,9 +275,14 @@ export component AppWindow inherits Window {
 
                 // widok slotów urządzenia (zakładki User/Factory) — klik otwiera slot
                 if root.active-tab != 2: ListView {
-                    for s[i] in root.slots: Rectangle {
+                    for s[i] in root.slots: row := Rectangle {
+                        // zaznaczony w edytorze (otwarty patch) vs aktywny na urządzeniu (live preset)
+                        property <bool> is-selected: s.occupied && s.patch-id == root.current-id;
+                        property <bool> is-active: root.active-tab == 0 && s.index == root.active-slot;
                         height: 36px;
-                        background: touch.has-hover && s.occupied ? #2f2f38 : transparent;
+                        background: row.is-selected ? #3a3a48
+                            : (row.is-active ? #34304a
+                            : (touch.has-hover && s.occupied ? #2f2f38 : transparent));
                         touch := TouchArea {
                             enabled: s.occupied;
                             clicked => {
@@ -285,8 +294,9 @@ export component AppWindow inherits Window {
                             spacing: 8px;
                             Text {
                                 width: 30px;
-                                text: s.index;
-                                color: #8a8a96;
+                                text: s.label;
+                                color: row.is-active ? #c8b6ff : #8a8a96;
+                                font-weight: row.is-active ? 700 : 400;
                                 vertical-alignment: center;
                             }
                             Text {

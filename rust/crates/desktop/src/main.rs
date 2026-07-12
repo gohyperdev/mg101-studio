@@ -84,6 +84,17 @@ fn tab_from_index(i: i32) -> LibraryTab {
     }
 }
 
+/// Etykieta slotu w konwencji footswitcha MG-101/QuickTone: 9 banków × 4 litery
+/// (A–D), więc index 0→"1A", 1→"1B", 4→"2A" … 35→"9D". Slot spoza 0..35 zwraca
+/// numer surowy (bezpieczne dla nietypowych profili).
+fn slot_label(index: u16) -> String {
+    const LETTERS: [char; 4] = ['A', 'B', 'C', 'D'];
+    if index >= 36 {
+        return index.to_string();
+    }
+    format!("{}{}", index / 4 + 1, LETTERS[(index % 4) as usize])
+}
+
 fn empty_detail() -> DetailUi {
     DetailUi {
         id: SharedString::new(),
@@ -214,11 +225,17 @@ fn refresh(ui: &AppWindow, vm: &mut Vm) {
         .collect();
     ui.set_patches(ModelRc::new(VecModel::from(rows)));
 
+    let slot_bank = match vm.tab() {
+        LibraryTab::Factory => "factory",
+        _ => "user",
+    };
     let slots: Vec<SlotRowUi> = vm
         .slot_rows()
         .iter()
         .map(|s| SlotRowUi {
             index: s.index as i32,
+            label: slot_label(s.index).into(),
+            patch_id: format!("device-{slot_bank}-{}", s.index).into(),
             name: s.name.clone().into(),
             occupied: s.occupied,
             writable: s.writable,
@@ -402,6 +419,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Zdekodowane rekordy per slot (bank, index) → (nazwa, bajty plikowe) — do
     // otwierania pojedynczego slotu w edytorze po kliknięciu.
     let slot_records: SlotRecords = Rc::new(RefCell::new(std::collections::HashMap::new()));
+    // Trwała sesja synchronizacji presetu (Program Change w obie strony). Some,
+    // gdy urządzenie jest podłączone i łącze otwarte. Nasłuch footswitcha + wysyłka
+    // wyboru z aplikacji.
+    let presync: Rc<RefCell<Option<mg101_desktop::device::PresetSync>>> =
+        Rc::new(RefCell::new(None));
+    // Aktywny preset na urządzeniu (index User 0..35, -1 = nieznany) — mirror
+    // `ui.active-slot`, aktualizowany z footswitcha i wyboru w aplikacji.
+    let active_slot: Rc<RefCell<i32>> = Rc::new(RefCell::new(-1));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -566,6 +591,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let srecs = slot_records.clone();
+        let psync = presync.clone();
+        let aslot = active_slot.clone();
         ui.on_open_slot(move |bank, index| {
             let Some(ui) = uw.upgrade() else { return };
             let key = (bank.to_string(), index as u16);
@@ -576,6 +603,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 vmc.borrow_mut()
                     .report_error("brak zdekodowanego slotu — wykonaj zrzut".into());
+            }
+            // Sync app→urządzenie: wybór presetu z banku User wysyła Program Change
+            // (footswitch 1A..9D = PC 0..35). Bank Factory nie jest wybierany PC.
+            if bank == "user" {
+                if let Some(s) = psync.borrow().as_ref() {
+                    s.select(index as u16);
+                }
+                *aslot.borrow_mut() = index;
+                ui.set_active_slot(index);
             }
             refresh(&ui, &mut vmc.borrow_mut());
         });
@@ -684,6 +720,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let krx = key_rx.clone();
         let ldump = last_dump.clone();
         let srecs = slot_records.clone();
+        let psync = presync.clone();
+        let aslot = active_slot.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
@@ -713,12 +751,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            // Detekcja hotplug co ~2 s (gdy nie trwa zrzut).
+            // Detekcja hotplug co ~2 s (gdy nie trwa zrzut) + utrzymanie trwałej
+            // sesji synchronizacji presetu wraz ze stanem połączenia.
             {
                 let mut t = tick.borrow_mut();
                 *t = t.wrapping_add(1);
                 if t.is_multiple_of(20) && dslot.borrow().is_none() {
                     detect_device(&ui);
+                    let connected = ui.get_device_connected();
+                    if connected && psync.borrow().is_none() {
+                        // Otwórz trwałe łącze sync (Program Change w obie strony).
+                        if let Some(d) = mg101_desktop::device::detect() {
+                            match mg101_desktop::device::PresetSync::start(d.port_needle) {
+                                Ok(s) => {
+                                    *psync.borrow_mut() = Some(s);
+                                    ui.set_device_live(true);
+                                }
+                                Err(e) => {
+                                    eprintln!("Sync presetu niedostępny: {e}");
+                                    ui.set_device_live(false);
+                                }
+                            }
+                        }
+                    } else if !connected && psync.borrow().is_some() {
+                        *psync.borrow_mut() = None; // odłączono → zamknij łącze
+                        ui.set_device_live(false);
+                        *aslot.borrow_mut() = -1;
+                        ui.set_active_slot(-1);
+                    }
+                }
+            }
+            // Zdarzenia footswitcha (urządzenie → host): podświetl aktywny preset
+            // i — jeśli slot jest już zdekodowany ze zrzutu — otwórz go w edytorze.
+            {
+                let events = psync
+                    .borrow()
+                    .as_ref()
+                    .map(|s| s.poll())
+                    .unwrap_or_default();
+                for mg101_desktop::device::SyncEvent::PresetChanged(n) in events {
+                    let idx = n as i32;
+                    if *aslot.borrow() != idx {
+                        *aslot.borrow_mut() = idx;
+                        ui.set_active_slot(idx);
+                        let key = ("user".to_string(), n as u16);
+                        let entry = srecs.borrow().get(&key).cloned();
+                        if let Some((name, record)) = entry {
+                            let id = format!("device-user-{n}");
+                            vmc.borrow_mut().open_device_patch(&id, &name, record);
+                            refresh(&ui, &mut vmc.borrow_mut());
+                        }
+                    }
                 }
             }
             if dslot.borrow().is_none() {
@@ -787,4 +870,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slot_label;
+
+    #[test]
+    fn slot_label_maps_index_to_footswitch_1a_9d() {
+        // 9 banków × 4 litery (A–D): 0→1A, 1→1B, 4→2A, 35→9D.
+        assert_eq!(slot_label(0), "1A");
+        assert_eq!(slot_label(1), "1B");
+        assert_eq!(slot_label(3), "1D");
+        assert_eq!(slot_label(4), "2A");
+        assert_eq!(slot_label(35), "9D");
+    }
+
+    #[test]
+    fn slot_label_out_of_range_falls_back_to_raw_number() {
+        assert_eq!(slot_label(36), "36");
+        assert_eq!(slot_label(100), "100");
+    }
 }

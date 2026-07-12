@@ -9,10 +9,11 @@
 //! `.mg101patch` (8402 B). Zrzut pokazuje zajętość slotów; pełne mapowanie na
 //! parametry wymaga dekodera wire↔plik (BACKLOG W2).
 
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
+use std::time::Duration;
 
-use mg101_device_link::{input_port_names, MidirLink};
+use mg101_device_link::{input_port_names, DeviceLink, LinkError, MidirLink, SysexAssembler};
 use mg101_device_pack_api::{DeviceProtocol, SlotAddr};
 use mg101_pack_nux_mg101::Mg101Protocol;
 
@@ -135,6 +136,89 @@ impl Dumper {
             out.push(m);
         }
         out
+    }
+}
+
+/// Zdarzenie z trwałej sesji synchronizacji presetu (urządzenie → host).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncEvent {
+    /// Na urządzeniu wybrano preset o numerze Program Change (0..).
+    PresetChanged(u8),
+}
+
+/// Trwała sesja MIDI do **dwukierunkowej** synchronizacji wybranego presetu.
+///
+/// Protokół (empiria `findings.md`): wybór presetu to MIDI Program Change
+/// `C0 <slot>` w obie strony — urządzenie wysyła go przy zmianie footswitchem,
+/// host wysyła go, by przełączyć preset na urządzeniu. Sesja żyje w tle póki
+/// uchwyt istnieje; wątek UI odpytuje [`PresetSync::poll`] w istniejącym Timerze,
+/// a wybór z aplikacji zgłasza przez [`PresetSync::select`]. `Studio` pozostaje
+/// jednowątkowe.
+///
+/// Działa OBOK [`Dumper`] — CoreMIDI/ALSA są multi-client, więc dwa połączenia
+/// do tego samego portu współistnieją (nasłuch presetu nie koliduje ze zrzutem).
+pub struct PresetSync {
+    events: Receiver<SyncEvent>,
+    cmd_tx: Sender<u8>,
+}
+
+impl PresetSync {
+    /// Otwiera trwałe łącze z portu `needle` i startuje wątek nasłuchu/wysyłki.
+    /// Zwraca błąd, jeśli portu nie udało się otworzyć (fail-fast, rendez-vous).
+    pub fn start(needle: &'static str) -> Result<Self, LinkError> {
+        let (ev_tx, events) = channel::<SyncEvent>();
+        let (cmd_tx, cmd_rx) = channel::<u8>();
+        let (open_tx, open_rx) = channel::<Result<(), LinkError>>();
+        thread::spawn(move || {
+            let mut link = match MidirLink::open(needle) {
+                Ok(l) => {
+                    let _ = open_tx.send(Ok(()));
+                    l
+                }
+                Err(e) => {
+                    let _ = open_tx.send(Err(e));
+                    return;
+                }
+            };
+            let mut asm = SysexAssembler::new();
+            loop {
+                // Wychodzące: wybór presetu z aplikacji → Program Change `C0 n`.
+                loop {
+                    match cmd_rx.try_recv() {
+                        Ok(n) => {
+                            let _ = link.send(&[0xC0, n & 0x7F]);
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        // Uchwyt porzucony (PresetSync zniknął) → kończymy wątek.
+                        Err(TryRecvError::Disconnected) => return,
+                    }
+                }
+                // Przychodzące: ramkujemy strumień i wykrywamy Program Change.
+                for msg in link.poll() {
+                    for framed in asm.push(&msg) {
+                        if framed.len() == 2 && (framed[0] & 0xF0) == 0xC0 {
+                            let _ = ev_tx.send(SyncEvent::PresetChanged(framed[1]));
+                        }
+                    }
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        match open_rx.recv() {
+            Ok(Ok(())) => Ok(Self { events, cmd_tx }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(LinkError::NotConnected),
+        }
+    }
+
+    /// Odbiera oczekujące zdarzenia (nieblokująco).
+    pub fn poll(&self) -> Vec<SyncEvent> {
+        self.events.try_iter().collect()
+    }
+
+    /// Zgłasza wybór presetu w aplikacji → wysyła `C0 <slot>` na urządzenie.
+    pub fn select(&self, slot: u16) {
+        let _ = self.cmd_tx.send((slot & 0x7F) as u8);
     }
 }
 

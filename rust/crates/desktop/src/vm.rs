@@ -1135,11 +1135,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mg101_vm_import_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("two.mg101patch");
-        // Dwa rekordy (wielokrotność record_size) → dwa patche.
-        std::fs::write(&path, vec![0u8; profile.record_size * 2]).unwrap();
+        // Dwa RÓŻNE rekordy (wielokrotność record_size) → dwa patche. ID jest
+        // adresowane treścią, więc rekordy muszą się różnić bajtami (inaczej mają
+        // ten sam hash i drugi jest idempotentnie pomijany — patrz asercja niżej).
+        let mut blob = vec![0u8; profile.record_size * 2];
+        *blob.last_mut().unwrap() = 1; // różnica w regionie IR (nie selektor) 2. rekordu
+        std::fs::write(&path, &blob).unwrap();
         let n = vm.import(path.to_str().unwrap());
         assert_eq!(n, 2);
         assert_eq!(vm.library_rows().len(), 4); // 2 startowe + 2 zaimportowane
+        // Ponowny import tego samego pliku jest idempotentny (ID = hash treści).
+        let n2 = vm.import(path.to_str().unwrap());
+        assert_eq!(n2, 2, "import zwraca liczbę rekordów w pliku");
+        assert_eq!(vm.library_rows().len(), 4, "brak duplikatów po re-imporcie");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
