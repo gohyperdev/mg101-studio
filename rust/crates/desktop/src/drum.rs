@@ -203,15 +203,52 @@ pub fn find(group: &str, pattern: &str) -> Option<(usize, usize)> {
     Some((gi, pi))
 }
 
-/// Buduje ramkę SysEx ustawiającą tempo DRUM (ta sama ramka, którą urządzenie
-/// wysyła przy zmianie tempa — replay jest bezpieczny). BPM przycięte do zakresu.
-pub fn tempo_sysex(bpm: u16) -> Vec<u8> {
+// Ramka ustawień: `F0 43 58 70 <TYP> <SUB> <param> 03 32 32 32 <hi> <lo> 00 F7`.
+// Konwencja SUB jest ta sama, co w protokole slotów (pack-nux-mg101::protocol):
+// 00 = żądanie (host→dev), 01 = zapis (host→dev), 02 = dane/powiadomienie (dev→host).
+// Urządzenie EMITUJE tempo z SUB=02; zapis musi więc iść z SUB=01 — odtwarzanie
+// ramki 02 z powrotem na urządzenie jest komunikatem „w złą stronę" i jest ignorowane.
+const TYPE_SETTING: u8 = 0x7E;
+const SUB_REQUEST: u8 = 0x00;
+const SUB_WRITE: u8 = 0x01;
+pub(crate) const SUB_DATA: u8 = 0x02;
+pub(crate) const PARAM_DRUM_TEMPO: u8 = 0x19;
+
+/// Wspólny kształt ramki tempa dla danej sub-komendy. BPM przycięte do zakresu,
+/// zakodowane 7-bitowo: `hi = bpm / 128`, `lo = bpm % 128` (np. 144 → `01 10`).
+fn tempo_frame(sub: u8, bpm: u16) -> Vec<u8> {
     let clamped = bpm.clamp(BPM_MIN, BPM_MAX);
     let hi = (clamped / 128) as u8;
     let lo = (clamped % 128) as u8;
     vec![
-        0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x19, 0x03, 0x32, 0x32, 0x32, hi, lo, 0x00, 0xF7,
+        0xF0,
+        0x43,
+        0x58,
+        0x70,
+        TYPE_SETTING,
+        sub,
+        PARAM_DRUM_TEMPO,
+        0x03,
+        0x32,
+        0x32,
+        0x32,
+        hi,
+        lo,
+        0x00,
+        0xF7,
     ]
+}
+
+/// Ramka ZAPISU tempa DRUM (host → urządzenie), SUB=01.
+pub fn tempo_sysex(bpm: u16) -> Vec<u8> {
+    tempo_frame(SUB_WRITE, bpm)
+}
+
+/// Ramka ŻĄDANIA aktualnego tempa (host → urządzenie), SUB=00. Wysyłana po
+/// połączeniu, by poznać tempo bez czekania, aż użytkownik je zmieni na urządzeniu
+/// (urządzenie samo nie rozgłasza tempa przy starcie).
+pub fn tempo_request() -> Vec<u8> {
+    tempo_frame(SUB_REQUEST, BPM_MIN)
 }
 
 #[cfg(test)]
@@ -258,17 +295,30 @@ mod tests {
 
     #[test]
     fn tempo_sysex_encodes_bpm() {
-        // 120 → hi=0 lo=0x78
+        // 120 → hi=0 lo=0x78 (zgodne z ramką przechwyconą z urządzenia)
         let f = tempo_sysex(120);
-        assert_eq!(f[11], 0x00);
-        assert_eq!(f[12], 0x78);
+        assert_eq!((f[11], f[12]), (0x00, 0x78));
         assert_eq!(f.first(), Some(&0xF0));
         assert_eq!(f.last(), Some(&0xF7));
-        // 160 → hi=1 lo=32
-        let f = tempo_sysex(160);
-        assert_eq!(f[11], 1);
-        assert_eq!(f[12], 32);
-        // clamp
-        assert_eq!(tempo_sysex(9999)[12] as u16 + tempo_sysex(9999)[11] as u16 * 128, BPM_MAX);
+        // 144 → hi=1 lo=0x10; 160 → hi=1 lo=32
+        assert_eq!((tempo_sysex(144)[11], tempo_sysex(144)[12]), (0x01, 0x10));
+        assert_eq!((tempo_sysex(160)[11], tempo_sysex(160)[12]), (0x01, 0x20));
+        // clamp do zakresu
+        let hi = tempo_sysex(9999)[11] as u16;
+        let lo = tempo_sysex(9999)[12] as u16;
+        assert_eq!(hi * 128 + lo, BPM_MAX);
+    }
+
+    #[test]
+    fn write_frame_uses_sub_write_not_data() {
+        // Sedno buga: urządzenie EMITUJE tempo z SUB=02 (dane). Odtworzenie tej
+        // ramki na urządzenie nic nie robi — zapis musi iść z SUB=01.
+        assert_eq!(tempo_sysex(120)[5], SUB_WRITE);
+        assert_ne!(tempo_sysex(120)[5], SUB_DATA);
+        assert_eq!(tempo_request()[5], SUB_REQUEST);
+        // Reszta kształtu ramki identyczna jak w powiadomieniu urządzenia.
+        let f = tempo_sysex(120);
+        assert_eq!(&f[0..5], &[0xF0, 0x43, 0x58, 0x70, TYPE_SETTING]);
+        assert_eq!(&f[6..11], &[PARAM_DRUM_TEMPO, 0x03, 0x32, 0x32, 0x32]);
     }
 }

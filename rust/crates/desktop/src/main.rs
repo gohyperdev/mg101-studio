@@ -1090,6 +1090,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(d) = mg101_desktop::device::detect() {
                             match mg101_desktop::device::PresetSync::start(d.port_needle) {
                                 Ok(s) => {
+                                    // Urządzenie nie rozgłasza tempa przy starcie — pytamy o nie,
+                                    // inaczej DRUM pokazywałby „— BPM" aż do zmiany na sprzęcie.
+                                    s.send_raw(mg101_desktop::drum::tempo_request());
                                     *psync.borrow_mut() = Some(s);
                                     ui.set_device_live(true);
                                 }

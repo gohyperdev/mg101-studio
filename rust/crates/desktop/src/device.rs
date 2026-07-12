@@ -225,23 +225,8 @@ impl PresetSync {
                         if framed == [0xF8] {
                             continue;
                         }
-                        if framed.len() == 2 && (framed[0] & 0xF0) == 0xC0 {
-                            let _ = ev_tx.send(SyncEvent::PresetChanged(framed[1]));
-                        }
-                        if framed.len() == 3
-                            && (framed[0] & 0xF0) == 0xB0
-                            && framed[1] == CC_EXP_TARGET
-                        {
-                            let _ = ev_tx.send(SyncEvent::ExpTarget(framed[2]));
-                        }
-                        // Tempo DRUM: ramka `F0 43 58 70 7E 02 19 03 32 32 32 <hi> <lo> 00 F7`
-                        // (15 B). BPM = hi*128 + lo (7-bit dane SysEx).
-                        if framed.len() == 15
-                            && framed[0] == 0xF0
-                            && framed[1..7] == [0x43, 0x58, 0x70, 0x7E, 0x02, 0x19]
-                        {
-                            let bpm = (framed[11] as u16) * 128 + framed[12] as u16;
-                            let _ = ev_tx.send(SyncEvent::DrumTempo(bpm));
+                        if let Some(ev) = classify(&framed) {
+                            let _ = ev_tx.send(ev);
                         }
                         let _ = mon_tx.send(framed);
                     }
@@ -291,9 +276,103 @@ impl PresetSync {
     }
 }
 
+/// Nagłówek ramek powiadomień urządzenia (device → host): `F0 43 58 70 7E 02 <param>`.
+/// SUB=02 to kierunek „dane z urządzenia" (patrz `drum`: 00=żądanie, 01=zapis).
+const NOTIFY_HEAD: [u8; 5] = [0x43, 0x58, 0x70, 0x7E, crate::drum::SUB_DATA];
+/// Identyfikator parametru „tempo DRUM" w ramce powiadomienia.
+const NOTIFY_DRUM_TEMPO: u8 = crate::drum::PARAM_DRUM_TEMPO;
+
+/// Rozpoznaje pojedynczy zramkowany komunikat MIDI jako zdarzenie synchronizacji.
+/// Wydzielone z pętli wątku, by dało się testować na prawdziwych bajtach z urządzenia.
+fn classify(framed: &[u8]) -> Option<SyncEvent> {
+    // Program Change (footswitch / wybór presetu).
+    if framed.len() == 2 && (framed[0] & 0xF0) == 0xC0 {
+        return Some(SyncEvent::PresetChanged(framed[1]));
+    }
+    // Control Change: centralne przypisanie pedału EXP.
+    if framed.len() == 3 && (framed[0] & 0xF0) == 0xB0 && framed[1] == CC_EXP_TARGET {
+        return Some(SyncEvent::ExpTarget(framed[2]));
+    }
+    // Tempo DRUM: `F0 43 58 70 7E 02 19 03 32 32 32 <hi> <lo> 00 F7` (15 B).
+    // BPM = hi*128 + lo (dane SysEx są 7-bitowe), np. `01 10` = 144, `00 78` = 120.
+    if framed.len() == 15
+        && framed[0] == 0xF0
+        && framed[1..6] == NOTIFY_HEAD
+        && framed[6] == NOTIFY_DRUM_TEMPO
+    {
+        let bpm = (framed[11] as u16) * 128 + framed[12] as u16;
+        return Some(SyncEvent::DrumTempo(bpm));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Prawdziwe ramki z urządzenia (monitor MIDI, przejazd tempa 144→147→120).
+    #[test]
+    fn classify_decodes_real_drum_tempo_frames() {
+        // BPM = hi*128 + lo.
+        let cases: &[(&[u8], u16)] = &[
+            (
+                &[
+                    0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x19, 0x03, 0x32, 0x32, 0x32, 0x01, 0x10,
+                    0x00, 0xF7,
+                ],
+                144,
+            ),
+            (
+                &[
+                    0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x19, 0x03, 0x32, 0x32, 0x32, 0x01, 0x13,
+                    0x00, 0xF7,
+                ],
+                147,
+            ),
+            (
+                &[
+                    0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x19, 0x03, 0x32, 0x32, 0x32, 0x00, 0x7F,
+                    0x00, 0xF7,
+                ],
+                127,
+            ),
+            (
+                &[
+                    0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x19, 0x03, 0x32, 0x32, 0x32, 0x00, 0x78,
+                    0x00, 0xF7,
+                ],
+                120,
+            ),
+        ];
+        for (frame, expected) in cases {
+            match classify(frame) {
+                Some(SyncEvent::DrumTempo(bpm)) => assert_eq!(bpm, *expected, "ramka {frame:02X?}"),
+                other => panic!("ramka {frame:02X?} → {other:?}, oczekiwano DrumTempo({expected})"),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_ignores_other_notification_frames() {
+        // Powiadomienie o zmianie gałki (typ 14) — nie jest tempem.
+        let knob = [
+            0xF0, 0x43, 0x58, 0x70, 0x7E, 0x02, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xF7,
+        ];
+        assert!(classify(&knob).is_none());
+    }
+
+    #[test]
+    fn classify_decodes_program_change_and_exp() {
+        assert!(matches!(
+            classify(&[0xC0, 0x05]),
+            Some(SyncEvent::PresetChanged(5))
+        ));
+        assert!(matches!(
+            classify(&[0xB0, CC_EXP_TARGET, 0x01]),
+            Some(SyncEvent::ExpTarget(1))
+        ));
+    }
 
     #[test]
     fn registry_has_mg101_with_two_banks() {
