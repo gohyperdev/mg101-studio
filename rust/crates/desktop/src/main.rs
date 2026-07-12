@@ -22,6 +22,9 @@ slint::include_modules!();
 
 type Vm = ViewModel<SqliteStore>;
 
+/// Zdekodowane rekordy slotów urządzenia: (bank, index) → (nazwa, bajty plikowe).
+type SlotRecords = Rc<RefCell<std::collections::HashMap<(String, u16), (String, Vec<u8>)>>>;
+
 /// Katalog danych aplikacji (trwała Library) — parytet v1.
 /// macOS: `~/Library/Application Support/dev.mos.mg101studio`;
 /// Windows: `%APPDATA%\dev.mos.mg101studio`; inne: `$HOME/.mg101studio`.
@@ -396,6 +399,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ostatni zrzut zdekodowany do rekordów plikowych (8402 B × zajęte sloty),
     // gotowy do importu do Biblioteki. Pusty, dopóki nie ma zrzutu.
     let last_dump: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+    // Zdekodowane rekordy per slot (bank, index) → (nazwa, bajty plikowe) — do
+    // otwierania pojedynczego slotu w edytorze po kliknięciu.
+    let slot_records: SlotRecords = Rc::new(RefCell::new(std::collections::HashMap::new()));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -553,6 +559,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Otwarcie slotu urządzenia w edytorze (W2): dekod już w mapie; wstaw do
+    // Biblioteki pod stabilnym id (idempotentnie) i zaznacz → edytor pokazuje
+    // pełne szczegóły i pozwala edytować kopię.
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let srecs = slot_records.clone();
+        ui.on_open_slot(move |bank, index| {
+            let Some(ui) = uw.upgrade() else { return };
+            let key = (bank.to_string(), index as u16);
+            let entry = srecs.borrow().get(&key).cloned();
+            if let Some((name, record)) = entry {
+                let id = format!("device-{bank}-{index}");
+                vmc.borrow_mut().open_device_patch(&id, &name, record);
+            } else {
+                vmc.borrow_mut()
+                    .report_error("brak zdekodowanego slotu — wykonaj zrzut".into());
+            }
+            refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
+
     // Zmiana języka: przelicz etykiety + odśwież.
     {
         let uw = ui.as_weak();
@@ -655,6 +683,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dslot = dumper.clone();
         let krx = key_rx.clone();
         let ldump = last_dump.clone();
+        let srecs = slot_records.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
@@ -708,13 +737,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     DumpMsg::Done { user, factory } => {
                         // Zdekoduj zajęte sloty do rekordów plikowych (8402 B) — gotowe
-                        // do importu z pełnymi parametrami (kodek wire→plik W2).
+                        // do importu z pełnymi parametrami (kodek wire→plik W2). Zapisz
+                        // też per slot (do otwierania pojedynczego slotu w edytorze).
                         let mut import_bytes = Vec::new();
+                        let mut recs = srecs.borrow_mut();
+                        recs.clear();
                         for s in user.iter().chain(factory.iter()).filter(|s| s.occupied()) {
                             if let Ok(rec) = mg101_pack_nux_mg101::wire::decode_slot(&s.blob) {
                                 import_bytes.extend_from_slice(&rec);
+                                let name = mg101_pack_nux_mg101::wire::decode_name(&s.blob);
+                                recs.insert((s.bank.clone(), s.index), (name, rec));
                             }
                         }
+                        drop(recs);
                         *ldump.borrow_mut() = import_bytes;
 
                         let to_rows = |dump: Vec<mg101_desktop::device::SlotDump>| {

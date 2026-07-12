@@ -352,6 +352,19 @@ impl<S: LibraryStore> ViewModel<S> {
         .is_some()
     }
 
+    /// Otwiera slot urządzenia w edytorze: wstawia zdekodowany rekord (bajty
+    /// plikowe) do Biblioteki pod stabilnym `id` (idempotentnie) i zaznacza go —
+    /// dzięki temu patch z urządzenia ma pełne szczegóły i jest edytowalny.
+    /// Bajty dekoduje warstwa device (kodek wire) — VM pozostaje device-agnostyczny.
+    /// Zwraca `id` otwartego patcha (do przełączenia zakładki na Bibliotekę w UI).
+    pub fn open_device_patch(&mut self, id: &str, name: &str, record: Vec<u8>) -> Option<String> {
+        if let Err(e) = self.studio.insert_device_patch(id, name, record) {
+            self.last_error = Some(self.localize_error(&e));
+            return None;
+        }
+        self.select(id).then(|| id.to_string())
+    }
+
     /// Szczegóły patcha (edytor). `None` przy błędzie/braku.
     pub fn detail(&mut self, patch_id: &str) -> Option<PatchDetail> {
         let v = self.exec(&Command::GetPatch {
@@ -889,6 +902,41 @@ mod tests {
             !vm.slot_rows()[0].writable,
             "bank fabryczny tylko do odczytu"
         );
+    }
+
+    #[test]
+    fn open_device_patch_gives_editable_detail() {
+        let mut vm = vm();
+        // Realny rekord plikowy (pierwszy patch fabryczny z pakietu, 8402 B).
+        let record = mg101_pack_nux_mg101::FACTORY_PATCHES[..8402].to_vec();
+        let id = vm
+            .open_device_patch("device-factory-0", "EuroLead", record)
+            .expect("otwarcie slotu");
+        // Szczegóły: pełny łańcuch 11 bloków.
+        let d = vm.detail(&id).expect("szczegóły patcha z urządzenia");
+        assert_eq!(d.name, "EuroLead");
+        assert_eq!(d.blocks.len(), 11);
+        // Idempotencja: ponowne otwarcie nie dubluje (ta sama liczba patchy).
+        let before = vm.library_rows().len();
+        vm.open_device_patch("device-factory-0", "EuroLead", vec![0u8; 8402]);
+        assert_eq!(
+            vm.library_rows().len(),
+            before,
+            "ponowne otwarcie nie dubluje"
+        );
+        // Edytowalność: znajdź blok z parametrem i zmień go.
+        let blk = d
+            .blocks
+            .iter()
+            .find(|b| !b.parameters.is_empty())
+            .expect("blok z parametrem");
+        let p = &blk.parameters[0];
+        let target = if p.value == p.minimum {
+            p.minimum + 1
+        } else {
+            p.minimum
+        };
+        assert!(vm.set_parameter(&id, d.revision, &blk.block, &p.name, target));
     }
 
     #[test]

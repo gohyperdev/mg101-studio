@@ -159,6 +159,7 @@ export component AppWindow inherits Window {
     callback save-settings(int, string, string, string); // provider, endpoint, model, key
     callback connect-dump();                           // W2: połącz i zrzuć banki
     callback import-dump();                             // W2: import zrzutu do Biblioteki
+    callback open-slot(string, int);                   // W2: otwórz slot (bank, index) w edytorze
 
     HorizontalBox {
         padding: 0px;
@@ -268,10 +269,17 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // widok slotów urządzenia (zakładki User/Factory)
+                // widok slotów urządzenia (zakładki User/Factory) — klik otwiera slot
                 if root.active-tab != 2: ListView {
                     for s[i] in root.slots: Rectangle {
                         height: 36px;
+                        background: touch.has-hover && s.occupied ? #2f2f38 : transparent;
+                        touch := TouchArea {
+                            enabled: s.occupied;
+                            clicked => {
+                                root.open-slot(root.active-tab == 0 ? "user" : "factory", s.index);
+                            }
+                        }
                         HorizontalBox {
                             padding-left: 8px;
                             spacing: 8px;

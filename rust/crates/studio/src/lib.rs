@@ -187,6 +187,40 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             .ok_or_else(|| ExecError::NotFound(id.clone()))
     }
 
+    /// Wstawia patch pobrany z urządzenia (już zdekodowany do rekordu plikowego)
+    /// pod stabilnym `id`. Idempotentne: gdy `id` już istnieje, nie nadpisuje
+    /// (ponowne kliknięcie slotu wybierze istniejący patch, nie zdubluje edycji).
+    /// Warstwa device-agnostyczna: przyjmuje bajty rekordu, nie wie o kodeku wire.
+    pub fn insert_device_patch(
+        &mut self,
+        id: &str,
+        name: &str,
+        blob: Vec<u8>,
+    ) -> Result<(), ExecError> {
+        if self.store.get(&id.to_string()).is_some() {
+            return Ok(());
+        }
+        let content_hash = content_hash(&blob, &self.name_mask());
+        let exact_hash = mg101_library::exact_hash(&blob);
+        self.store.add(LibraryPatch {
+            id: id.to_string(),
+            name: name.to_string(),
+            blob,
+            origin: PatchOrigin::PulledFromDevice,
+            device_id: self.profile.id.clone(),
+            firmware: None,
+            codec_version: "wire-v1".into(),
+            content_hash,
+            exact_hash,
+            tags: Default::default(),
+            groups: Default::default(),
+            created_at: self.now_ms,
+            updated_at: self.now_ms,
+            revision: 1,
+        })?;
+        Ok(())
+    }
+
     /// Wykonuje komendę, zwracając JSON wyniku (kształt 1:1 z v1).
     pub fn execute(&mut self, command: &Command) -> Result<Value, ExecError> {
         match command {
