@@ -412,6 +412,88 @@ fn detect_device(ui: &AppWindow) {
     }
 }
 
+/// Obsługuje komendy DRUM (sterowanie na żywo) agenta, kierując je na urządzenie
+/// zamiast do Studio. Zwraca `None`, gdy to nie komenda DRUM (obsłuży ją Studio).
+fn handle_drum_command(
+    cmd: &mg101_commands::Command,
+    presync: &Rc<RefCell<Option<mg101_desktop::device::PresetSync>>>,
+) -> Option<Result<serde_json::Value, String>> {
+    use mg101_commands::Command;
+    use mg101_desktop::drum;
+    use serde_json::json;
+
+    // Katalog nie wymaga urządzenia — czysty odczyt danych.
+    if let Command::DrumCatalog = cmd {
+        let groups: Vec<serde_json::Value> = drum::GROUPS
+            .iter()
+            .enumerate()
+            .map(|(gi, g)| {
+                json!({
+                    "group": g.name,
+                    "patterns": g.patterns.iter().enumerate()
+                        .map(|(pi, p)| json!({
+                            "number": pi + 1,
+                            "name": p,
+                            "cc82": drum::group_base(gi) + pi as u8,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        return Some(Ok(json!({ "groups": groups })));
+    }
+
+    // Komendy sterujące wymagają aktywnego połączenia.
+    let is_drum = matches!(
+        cmd,
+        Command::DrumTransport { .. }
+            | Command::DrumVolume { .. }
+            | Command::DrumPattern { .. }
+            | Command::DrumTempo { .. }
+    );
+    if !is_drum {
+        return None;
+    }
+    let guard = presync.borrow();
+    let Some(s) = guard.as_ref() else {
+        return Some(Err(
+            "urządzenie niepodłączone — najpierw Pobierz/połącz z MG-101".into(),
+        ));
+    };
+    Some(match cmd {
+        Command::DrumTransport { playing } => {
+            s.send_cc(drum::CC_DRUM_TRANSPORT, if *playing { 1 } else { 0 });
+            Ok(json!({ "ok": true, "playing": playing }))
+        }
+        Command::DrumVolume { value } => {
+            let v = (*value).clamp(0, 100) as u8;
+            s.send_cc(drum::CC_DRUM_VOLUME, v);
+            Ok(json!({ "ok": true, "volume": v }))
+        }
+        Command::DrumPattern { group, pattern } => match drum::find(group, pattern) {
+            Some((gi, pi)) => {
+                let cc = drum::group_base(gi) + pi as u8;
+                s.send_cc(drum::CC_DRUM_PATTERN, cc);
+                Ok(json!({
+                    "ok": true,
+                    "group": drum::GROUPS[gi].name,
+                    "pattern": format!("{:02} {}", pi + 1, drum::GROUPS[gi].patterns[pi]),
+                    "cc82": cc,
+                }))
+            }
+            None => Err(format!(
+                "nieznany wzorzec: grupa='{group}', wzorzec='{pattern}' (użyj drum_list_patterns)"
+            )),
+        },
+        Command::DrumTempo { bpm } => {
+            let clamped = (*bpm).clamp(drum::BPM_MIN as i64, drum::BPM_MAX as i64) as u16;
+            s.send_raw(drum::tempo_sysex(clamped));
+            Ok(json!({ "ok": true, "bpm": clamped }))
+        }
+        _ => unreachable!("is_drum przefiltrowane wyżej"),
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (profile, catalog) = mg101_pack_nux_mg101::load()?;
     let profile = Box::leak(Box::new(profile));
@@ -473,6 +555,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     ui.set_device_models(ModelRc::new(VecModel::from(device_names)));
     ui.set_device_index(0);
+    // Katalog wzorców DRUM (dwupoziomowy wybór grupa → wzorzec).
+    {
+        use mg101_desktop::drum;
+        let names: Vec<SharedString> =
+            drum::GROUPS.iter().map(|g| g.name.into()).collect();
+        let patterns: Vec<ModelRc<SharedString>> = drum::GROUPS
+            .iter()
+            .map(|g| {
+                let items: Vec<SharedString> = g
+                    .patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| format!("{:02} {}", i + 1, p).into())
+                    .collect();
+                ModelRc::new(VecModel::from(items))
+            })
+            .collect();
+        let bases: Vec<i32> = (0..drum::GROUPS.len())
+            .map(|gi| drum::group_base(gi) as i32)
+            .collect();
+        ui.set_drum_group_names(ModelRc::new(VecModel::from(names)));
+        ui.set_drum_group_patterns(ModelRc::new(VecModel::from(patterns)));
+        ui.set_drum_group_base(ModelRc::new(VecModel::from(bases)));
+    }
     detect_device(&ui);
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
     let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
@@ -772,6 +878,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // DRUM tempo: wyślij ramkę SysEx BPM na urządzenie.
+    {
+        let psync = presync.clone();
+        ui.on_send_drum_tempo(move |bpm| {
+            if bpm > 0 {
+                if let Some(s) = psync.borrow().as_ref() {
+                    s.send_raw(mg101_desktop::drum::tempo_sysex(bpm as u16));
+                }
+            }
+        });
+    }
+
     // Monitor MIDI: włącz/wyłącz nasłuch wszystkich komunikatów.
     {
         let uw = ui.as_weak();
@@ -862,6 +980,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let slot = runner.clone();
+        let psync = presync.clone();
         pump.start(TimerMode::Repeated, Duration::from_millis(40), move || {
             let Some(ui) = uw.upgrade() else { return };
             if slot.borrow().is_none() {
@@ -875,7 +994,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(r) = guard.as_ref() {
                     // Wykonaj oczekujące narzędzia na Studio (wątek UI).
                     while let Some(cmd) = r.try_tool_request() {
-                        let res = vm.execute_tool(&cmd);
+                        // Komendy DRUM (sterowanie na żywo) idą do urządzenia, nie do Studio.
+                        let res = match handle_drum_command(&cmd, &psync) {
+                            Some(r) => r,
+                            None => vm.execute_tool(&cmd),
+                        };
                         r.send_tool_result(res);
                         did_work = true;
                     }

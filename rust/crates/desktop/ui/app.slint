@@ -112,6 +112,11 @@ export component AppWindow inherits Window {
     in property <bool> midi-monitor-on;    // nasłuch monitora włączony
     in property <int> exp-index: -1;       // centralne przypisanie EXP (0=off..6=RVB, -1=nieznane)
     in property <int> drum-tempo: -1;      // aktualne tempo DRUM (BPM, -1=nieznane) — odczyt SysEx
+    // Katalog wzorców DRUM (z Rust) — dwupoziomowy wybór: grupa → wzorzec.
+    in property <[string]> drum-group-names;       // 10 grup (ROCK, CTRY, …)
+    in property <[[string]]> drum-group-patterns;  // wzorce w każdej grupie
+    in property <[int]> drum-group-base;           // baza CC82 pierwszego wzorca grupy
+    property <int> drum-group-index: 0;            // wybrana grupa (stan UI)
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -199,6 +204,7 @@ export component AppWindow inherits Window {
     callback save-midi-log();                          // monitor MIDI: zapisz do pliku
     callback set-exp(int);                             // centralne EXP: wyślij CC79 = index
     callback send-control(int, int);                   // generyczny CC: wyślij CC<cc> = <value> (DRUM/LOOP)
+    callback send-drum-tempo(int);                     // DRUM tempo: wyślij ramkę SysEx BPM
 
     VerticalBox {
         padding: 0px;
@@ -866,6 +872,33 @@ export component AppWindow inherits Window {
                                     color: #c8b6ff; vertical-alignment: center;
                                 }
                             }
+                            // Tempo (BPM) — odczyt z urządzenia + zapis ramką SysEx.
+                            Text { text: "Tempo (BPM)"; color: #8a8a96; font-size: 11px; }
+                            HorizontalBox {
+                                spacing: 6px; alignment: start;
+                                drum-bpm := LineEdit {
+                                    width: 80px;
+                                    input-type: number;
+                                    enabled: root.device-connected;
+                                    text: root.drum-tempo >= 0 ? root.drum-tempo : 120;
+                                    accepted(t) => { root.send-drum-tempo(Math.round(t.to-float())); }
+                                }
+                                Button {
+                                    text: "Ustaw";
+                                    enabled: root.device-connected;
+                                    clicked => { root.send-drum-tempo(Math.round(drum-bpm.text.to-float())); }
+                                }
+                                Button {
+                                    text: "−5";
+                                    enabled: root.device-connected;
+                                    clicked => { root.send-drum-tempo(Math.round(drum-bpm.text.to-float()) - 5); }
+                                }
+                                Button {
+                                    text: "+5";
+                                    enabled: root.device-connected;
+                                    clicked => { root.send-drum-tempo(Math.round(drum-bpm.text.to-float()) + 5); }
+                                }
+                            }
                             // Volume (CC83, 0..100)
                             Text { text: "Volume"; color: #8a8a96; font-size: 11px; }
                             drum-vol := Slider {
@@ -873,40 +906,26 @@ export component AppWindow inherits Window {
                                 enabled: root.device-connected;
                                 changed(v) => { root.send-control(83, Math.round(v)); }
                             }
-                            // Preset/wzorzec (CC82)
-                            Text { text: "Wzorzec (preset)"; color: #8a8a96; font-size: 11px; }
-                            drum-preset := Slider {
-                                minimum: 0; maximum: 99; value: 0;
+                            // Wzorzec — dwupoziomowy wybór: grupa → wzorzec (CC82).
+                            Text { text: "Wzorzec — grupa"; color: #8a8a96; font-size: 11px; }
+                            ComboBox {
+                                model: root.drum-group-names;
+                                current-index: root.drum-group-index;
                                 enabled: root.device-connected;
-                                changed(v) => { root.send-control(82, Math.round(v)); }
-                            }
-                            HorizontalBox {
-                                spacing: 8px; alignment: start;
-                                Button {
-                                    text: "◀ poprz.";
-                                    enabled: root.device-connected;
-                                    clicked => {
-                                        drum-preset.value = drum-preset.value <= 0 ? 0 : drum-preset.value - 1;
-                                        root.send-control(82, Math.round(drum-preset.value));
-                                    }
-                                }
-                                Text {
-                                    width: 40px;
-                                    text: Math.round(drum-preset.value);
-                                    color: white; horizontal-alignment: center; vertical-alignment: center;
-                                }
-                                Button {
-                                    text: "nast. ▶";
-                                    enabled: root.device-connected;
-                                    clicked => {
-                                        drum-preset.value = drum-preset.value >= 99 ? 99 : drum-preset.value + 1;
-                                        root.send-control(82, Math.round(drum-preset.value));
-                                    }
+                                selected => {
+                                    root.drum-group-index = self.current-index;
+                                    drum-pat.current-index = 0;
+                                    root.send-control(82, root.drum-group-base[self.current-index]);
                                 }
                             }
-                            Text {
-                                text: "Tempo: odczyt z urządzenia (zmiana tempa z aplikacji — wkrótce, wymaga komendy SysEx).";
-                                color: #6a6a76; font-size: 10px; wrap: word-wrap;
+                            Text { text: "Wzorzec"; color: #8a8a96; font-size: 11px; }
+                            drum-pat := ComboBox {
+                                model: root.drum-group-patterns[root.drum-group-index];
+                                current-index: 0;
+                                enabled: root.device-connected;
+                                selected => {
+                                    root.send-control(82, root.drum-group-base[root.drum-group-index] + self.current-index);
+                                }
                             }
                         }
                     }

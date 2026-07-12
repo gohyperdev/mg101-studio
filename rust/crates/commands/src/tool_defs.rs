@@ -309,6 +309,50 @@ impl ToolDefinition {
                 schema(json!({}), &[]),
                 Kind::Destructive,
             ));
+
+            // LIVE DEVICE — DRUM (sterowanie na żywo, wymaga połączenia z urządzeniem)
+            t.push(ToolDefinition::new(
+                "drum_list_patterns",
+                "Zwraca katalog wzorców perkusji DRUM: grupy (ROCK, CTRY, …) i wzorce w każdej grupie. Użyj, by poznać dostępne nazwy przed drum_set_pattern.",
+                schema(json!({}), &[]),
+                Kind::Read,
+            ));
+            t.push(ToolDefinition::new(
+                "drum_transport",
+                "Uruchamia lub zatrzymuje odtwarzanie perkusji na żywo na urządzeniu.",
+                schema(
+                    json!({"playing": bool_prop("true=Play, false=Stop.")}),
+                    &["playing"],
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "drum_set_volume",
+                "Ustawia głośność perkusji (0–100) na żywo na urządzeniu.",
+                schema(
+                    json!({"value": int_prop("Głośność 0–100.")}),
+                    &["value"],
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "drum_set_pattern",
+                "Wybiera wzorzec perkusji na żywo. Podaj nazwę grupy (np. ROCK, CTRY) oraz wzorzec jako nazwę (np. \"Walk Line\") lub numer 1-based w grupie.",
+                schema(
+                    json!({
+                        "group": str_prop("Nazwa grupy: ROCK, CTRY, BLUES, METAL, FUNK, MET, BALD, POP, REGGAE, ELEC."),
+                        "pattern": str_prop("Nazwa wzorca lub numer 1-based w obrębie grupy."),
+                    }),
+                    &["group", "pattern"],
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "drum_set_tempo",
+                "Ustawia tempo perkusji w BPM (40–240) na żywo na urządzeniu.",
+                schema(json!({"bpm": int_prop("Tempo w BPM (40–240).")}), &["bpm"]),
+                Kind::Write,
+            ));
         }
 
         t

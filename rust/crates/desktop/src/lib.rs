@@ -19,6 +19,7 @@ pub mod keychain;
 // Zrzut banków z fizycznego urządzenia + rejestr packów — tylko natywnie.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod device;
+pub mod drum;
 
 pub use i18n::{tr, Lang};
 pub use vm::{

@@ -283,6 +283,12 @@ impl PresetSync {
             .cmd_tx
             .send(vec![0xB0, cc & 0x7F, value.min(127)]);
     }
+
+    /// Wysyła surowy komunikat (np. ramkę SysEx tempa DRUM) bez modyfikacji.
+    /// Bajty muszą być kompletne (z `F0`…`F7` dla SysEx).
+    pub fn send_raw(&self, bytes: Vec<u8>) {
+        let _ = self.cmd_tx.send(bytes);
+    }
 }
 
 #[cfg(test)]

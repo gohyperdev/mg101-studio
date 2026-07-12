@@ -313,6 +313,15 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                 destination_path,
             } => self.export_patch(target, destination_path),
             Command::ListFiles { path } => self.list_files(path),
+            // Sterowanie DRUM na żywo obsługuje warstwa desktopu (MIDI CC/SysEx na
+            // urządzenie) — nie modyfikuje patchy, więc Studio go nie realizuje.
+            Command::DrumCatalog
+            | Command::DrumTransport { .. }
+            | Command::DrumVolume { .. }
+            | Command::DrumPattern { .. }
+            | Command::DrumTempo { .. } => Err(ExecError::Unsupported(
+                "komenda DRUM wymaga podłączonego urządzenia (sterowanie na żywo)".into(),
+            )),
         }
     }
 

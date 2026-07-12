@@ -119,6 +119,27 @@ pub enum Command {
         target: TargetRef,
     },
     RevertSession,
+    // Live device control (DRUM) — sterowanie na żywo urządzeniem (MIDI CC/SysEx).
+    // Nie modyfikują patcha: wykonywane w warstwie desktopu na aktywnym połączeniu.
+    /// Zwraca katalog wzorców DRUM (grupy i wzorce).
+    DrumCatalog,
+    /// Start/stop odtwarzania perkusji (CC81).
+    DrumTransport {
+        playing: bool,
+    },
+    /// Głośność perkusji 0–100 (CC83).
+    DrumVolume {
+        value: i64,
+    },
+    /// Wybór wzorca po nazwie grupy i wzorca/numerze (CC82).
+    DrumPattern {
+        group: String,
+        pattern: String,
+    },
+    /// Ustawia tempo DRUM w BPM (ramka SysEx).
+    DrumTempo {
+        bpm: i64,
+    },
 }
 
 impl Command {
@@ -148,6 +169,11 @@ impl Command {
             Command::ListFiles { .. } => "list_files",
             Command::DeletePatch { .. } => "delete_patch",
             Command::RevertSession => "revert_session",
+            Command::DrumCatalog => "drum_list_patterns",
+            Command::DrumTransport { .. } => "drum_transport",
+            Command::DrumVolume { .. } => "drum_set_volume",
+            Command::DrumPattern { .. } => "drum_set_pattern",
+            Command::DrumTempo { .. } => "drum_set_tempo",
         }
     }
 
@@ -161,7 +187,8 @@ impl Command {
             | Command::GetProfile
             | Command::GetDiff { .. }
             | Command::GetRaw { .. }
-            | Command::SelectPatch { .. } => Kind::Read,
+            | Command::SelectPatch { .. }
+            | Command::DrumCatalog => Kind::Read,
             Command::SetParameter { .. }
             | Command::SetModel { .. }
             | Command::SetBypass { .. }
@@ -170,6 +197,10 @@ impl Command {
             | Command::SetNamedField { .. }
             | Command::ClearIr { .. }
             | Command::DuplicatePatch { .. }
+            | Command::DrumTransport { .. }
+            | Command::DrumVolume { .. }
+            | Command::DrumPattern { .. }
+            | Command::DrumTempo { .. }
             | Command::RevertLastAgentAction => Kind::Write,
             Command::SetIr { .. }
             | Command::ImportPatch { .. }
@@ -370,6 +401,39 @@ impl Command {
                 target: target_ref(args)?,
             },
             "revert_session" => Command::RevertSession,
+            "drum_list_patterns" => Command::DrumCatalog,
+            "drum_transport" => Command::DrumTransport {
+                playing: bool_arg(args, "playing")?,
+            },
+            "drum_set_volume" => Command::DrumVolume {
+                value: int_arg(args, "value")?,
+            },
+            "drum_set_pattern" => {
+                // Wzorzec dopuszcza nazwę (string) lub numer 1-based (int) — LLM
+                // bywa niekonsekwentny w typie, więc koercja number→string.
+                let pattern = match args
+                    .get("pattern")
+                    .or_else(|| args.get("name"))
+                    .or_else(|| args.get("index"))
+                {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Number(n)) => n.to_string(),
+                    Some(_) => {
+                        return Err(ParseError::InvalidArgumentType {
+                            name: "pattern".into(),
+                            expected: "string or integer".into(),
+                        })
+                    }
+                    None => return Err(ParseError::MissingArgument("pattern".into())),
+                };
+                Command::DrumPattern {
+                    group: string_arg(args, "group")?,
+                    pattern,
+                }
+            }
+            "drum_set_tempo" => Command::DrumTempo {
+                bpm: int_arg(args, "bpm")?,
+            },
             other => return Err(ParseError::UnknownTool(other.into())),
         })
     }
