@@ -137,6 +137,16 @@ export component AppWindow inherits Window {
     in property <string> t-fetch;
     in property <string> t-import-dump;
     in property <string> t-copy-library;
+    // tooltipy (tłumaczone)
+    in property <string> t-tip-value;
+    in property <string> t-tip-inc;
+    in property <string> t-tip-dec;
+    in property <string> t-tip-import;
+    in property <string> t-tip-export;
+    in property <string> t-tip-duplicate;
+    in property <string> t-tip-delete;
+    in property <string> t-tip-revert;
+    in property <string> t-tip-copy-library;
     in property <string> t-empty-slot;
     in property <string> t-rev;
     in property <string> t-settings;
@@ -353,22 +363,26 @@ export component AppWindow inherits Window {
                     text: "⭳ " + root.t-copy-library;
                     enabled: root.has-selection;
                     clicked => { root.copy-to-library(); }
+                    Tooltip { text: @markdown("\{root.t-tip-copy-library}"); }
                 }
                 HorizontalBox {
                     spacing: 4px;
                     Button {
                         text: root.t-import;
                         clicked => { root.import(); }
+                        Tooltip { text: @markdown("\{root.t-tip-import}"); }
                     }
                     Button {
                         text: root.t-export;
                         enabled: root.has-selection;
                         clicked => { root.export-patch(root.current-id, root.detail.revision); }
+                        Tooltip { text: @markdown("\{root.t-tip-export}"); }
                     }
                     Button {
                         text: root.t-duplicate;
                         enabled: root.has-selection;
                         clicked => { root.duplicate(root.current-id, root.detail.revision); }
+                        Tooltip { text: @markdown("\{root.t-tip-duplicate}"); }
                     }
                 }
                 HorizontalBox {
@@ -377,10 +391,12 @@ export component AppWindow inherits Window {
                         text: root.t-delete;
                         enabled: root.has-selection;
                         clicked => { root.delete-patch(root.current-id, root.detail.revision); }
+                        Tooltip { text: @markdown("\{root.t-tip-delete}"); }
                     }
                     Button {
                         text: root.t-revert;
                         clicked => { root.revert(); }
+                        Tooltip { text: @markdown("\{root.t-tip-revert}"); }
                     }
                     Rectangle { horizontal-stretch: 1; }
                 }
@@ -501,12 +517,10 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
-                                    Text {
-                                        // Wartość: fizyczna (dB/Hz) gdy znany wzór, inaczej surowa 0..100.
-                                        width: 74px;
-                                        text: p.control == "toggle"
-                                            ? (p.value == 0 ? "OFF" : "ON")
-                                            : (p.display == "" ? p.value : p.display);
+                                    // Wartość toggle: przełącznik ON/OFF.
+                                    if p.control == "toggle": Text {
+                                        width: 54px;
+                                        text: p.value == 0 ? "OFF" : "ON";
                                         color: white;
                                         vertical-alignment: center;
                                     }
@@ -514,13 +528,35 @@ export component AppWindow inherits Window {
                                         text: p.value == 0 ? "→ ON" : "→ OFF";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value == 0 ? 1 : 0, p.midi-cc); }
                                     }
-                                    if p.control != "toggle": Button {
-                                        text: "−";
-                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1, p.midi-cc); }
+                                    // Wartość ciągła: EDYTOWALNE pole (walidacja zakresu w Rust —
+                                    // wartość poza [min,max] jest odrzucana i pole wraca do zapisanej).
+                                    if p.control != "toggle": LineEdit {
+                                        width: 56px;
+                                        horizontal-alignment: center;
+                                        input-type: number;
+                                        text: p.value;
+                                        accepted(v) => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, self.text.to-float(), p.midi-cc); }
+                                        Tooltip { text: @markdown("\{root.t-tip-value}"); }
+                                    }
+                                    // Fizyczna wartość (dB/Hz), gdy znany wzór — obok pola.
+                                    if p.control != "toggle" && p.display != "": Text {
+                                        width: 60px;
+                                        text: p.display;
+                                        color: #9a9aa6;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
                                     }
                                     if p.control != "toggle": Button {
+                                        width: 30px;
+                                        text: "−";
+                                        clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value - 1, p.midi-cc); }
+                                        Tooltip { text: @markdown("\{root.t-tip-dec}"); }
+                                    }
+                                    if p.control != "toggle": Button {
+                                        width: 30px;
                                         text: "+";
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.value + 1, p.midi-cc); }
+                                        Tooltip { text: @markdown("\{root.t-tip-inc}"); }
                                     }
                                     Text {
                                         text: p.minimum + "…" + p.maximum

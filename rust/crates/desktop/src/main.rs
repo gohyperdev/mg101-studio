@@ -207,6 +207,15 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_fetch(l("device.fetch"));
     ui.set_t_import_dump(l("device.import_dump"));
     ui.set_t_copy_library(l("device.copy_to_library"));
+    ui.set_t_tip_value(l("tip.value"));
+    ui.set_t_tip_inc(l("tip.inc"));
+    ui.set_t_tip_dec(l("tip.dec"));
+    ui.set_t_tip_import(l("tip.import"));
+    ui.set_t_tip_export(l("tip.export"));
+    ui.set_t_tip_duplicate(l("tip.duplicate"));
+    ui.set_t_tip_delete(l("tip.delete"));
+    ui.set_t_tip_revert(l("tip.revert"));
+    ui.set_t_tip_copy_library(l("tip.copy_library"));
     ui.set_t_empty_slot(l("slot.empty"));
     ui.set_t_rev(l("editor.rev"));
     ui.set_t_settings(l("inspector.settings"));

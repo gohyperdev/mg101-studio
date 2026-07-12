@@ -95,6 +95,35 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("device.copy_to_library", "Kopiuj do Biblioteki", "Copy to Library"),
         ("device.none", "brak urządzenia", "no device"),
         (
+            "tip.value",
+            "Wpisz wartość (zakres obok) i zatwierdź Enter",
+            "Type a value (range shown) and press Enter",
+        ),
+        ("tip.inc", "Zwiększ o 1", "Increase by 1"),
+        ("tip.dec", "Zmniejsz o 1", "Decrease by 1"),
+        ("tip.import", "Importuj patch z pliku .mg101patch", "Import a patch from a .mg101patch file"),
+        (
+            "tip.export",
+            "Zapisz wybrany patch do pliku .mg101patch",
+            "Save the selected patch to a .mg101patch file",
+        ),
+        (
+            "tip.duplicate",
+            "Utwórz kopię wybranego patcha w Bibliotece",
+            "Create a copy of the selected patch in the Library",
+        ),
+        ("tip.delete", "Usuń wybrany patch z Biblioteki", "Delete the selected patch from the Library"),
+        (
+            "tip.revert",
+            "Cofnij ostatnią zmianę bieżącego patcha",
+            "Undo the last change to the current patch",
+        ),
+        (
+            "tip.copy_library",
+            "Skopiuj otwarty slot urządzenia do Biblioteki jako trwały wpis",
+            "Copy the open device slot to the Library as a permanent entry",
+        ),
+        (
             "error.title",
             "Operacja nie powiodła się",
             "Operation failed",
