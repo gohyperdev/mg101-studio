@@ -56,6 +56,11 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("editor.rev", "rew.", "rev"),
         ("slot.empty", "(pusty)", "(empty)"),
         ("inspector.changes", "Zmiany", "Changes"),
+        (
+            "inspector.changes_header",
+            "Zmiany bajtów względem oryginału (offset: przed → po)",
+            "Byte changes vs. original (offset: before → after)",
+        ),
         ("inspector.binary", "Binarne", "Binary"),
         ("inspector.agent", "Agent", "Agent"),
         ("inspector.mcp", "MCP", "MCP"),
@@ -85,6 +90,10 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ),
         ("transfer.push", "Wyślij do slotu", "Push to Slot"),
         ("transfer.pull", "Pobierz ze slotu", "Pull from Slot"),
+        ("device.fetch", "Pobierz", "Fetch"),
+        ("device.import_dump", "Import → Biblioteka", "Import → Library"),
+        ("device.copy_to_library", "Kopiuj do Biblioteki", "Copy to Library"),
+        ("device.none", "brak urządzenia", "no device"),
         (
             "error.title",
             "Operacja nie powiodła się",

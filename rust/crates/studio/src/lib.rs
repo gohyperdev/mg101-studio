@@ -205,6 +205,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         self.store.add(LibraryPatch {
             id: id.to_string(),
             name: name.to_string(),
+            baseline_blob: blob.clone(),
             blob,
             origin: PatchOrigin::PulledFromDevice,
             device_id: self.profile.id.clone(),
@@ -589,10 +590,15 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
     fn get_diff(&self, id: &PatchId) -> Result<Value, ExecError> {
         let item = self.get_patch(id)?;
         let rec = self.record(&item)?;
-        // Bazą różnicy jest bieżący blob względem "czystego" rekordu tej samej
-        // długości? v1 porównywał z importowanym originałem; tu brak baseline w
-        // Bibliotece → różnice względem zer (TODO baseline w E6.2b/BACKLOG).
-        let baseline = PatchRecord::new(vec![0u8; item.blob.len()], self.profile)?;
+        // Baza różnicy to bajty z chwili utworzenia/importu (parytet v1: „zmiany
+        // względem importowanego oryginału"). Gdy brak baseline (stare wpisy) →
+        // porównaj z bieżącym blobem, czyli pokaż BRAK zmian (bez szumu 0→wartość).
+        let baseline_bytes = if item.baseline_blob.is_empty() {
+            item.blob.clone()
+        } else {
+            item.baseline_blob.clone()
+        };
+        let baseline = PatchRecord::new(baseline_bytes, self.profile)?;
         let diffs: Vec<Value> = rec
             .differences(&baseline)
             .iter()
@@ -672,6 +678,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         let new_id = format!("{patch_id}-copy-{}", self.seq);
         let mut copy = src.clone();
         copy.id = new_id.clone();
+        copy.baseline_blob = copy.blob.clone(); // baza = stan z chwili duplikacji
         copy.origin = PatchOrigin::Created;
         copy.revision = 1;
         copy.created_at = self.now_ms;
@@ -931,6 +938,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                 name: String::new(),
                 content_hash: String::new(),
                 exact_hash,
+                baseline_blob: blob.clone(),
                 blob,
                 origin: PatchOrigin::ImportedFile,
                 device_id: self.profile.id.clone(),

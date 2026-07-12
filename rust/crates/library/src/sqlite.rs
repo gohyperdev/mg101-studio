@@ -332,6 +332,7 @@ mod tests {
         LibraryPatch {
             id: id.into(),
             name: id.into(),
+            baseline_blob: Vec::new(),
             blob: vec![9, 8, 7],
             origin: PatchOrigin::PulledFromDevice,
             device_id: "nux-mg101".into(),

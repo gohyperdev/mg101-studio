@@ -60,6 +60,11 @@ pub struct LibraryPatch {
     pub name: String,
     /// Oryginalne bajty patcha — nieznane bajty zachowane bez straty.
     pub blob: Vec<u8>,
+    /// Bajty bazowe (stan z chwili utworzenia/importu) — baza dla widoku „Zmiany".
+    /// `serde(default)` = kompatybilność wstecz (stare wpisy bez pola → pusty →
+    /// diff liczony względem bieżącego blobu, czyli brak fałszywych zmian).
+    #[serde(default)]
+    pub baseline_blob: Vec<u8>,
     pub origin: PatchOrigin,
     pub device_id: DeviceId,
     pub firmware: Option<String>,
@@ -179,6 +184,7 @@ mod tests {
         let p = LibraryPatch {
             id: "p1".into(),
             name: "X".into(),
+            baseline_blob: Vec::new(),
             blob: vec![1, 2, 3],
             origin: PatchOrigin::Created,
             device_id: "nux-mg101".into(),

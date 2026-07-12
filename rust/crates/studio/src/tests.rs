@@ -37,6 +37,7 @@ fn patch(id: &str, record_size: usize) -> LibraryPatch {
     LibraryPatch {
         id: id.into(),
         name: id.into(),
+        baseline_blob: vec![0u8; record_size],
         blob: vec![0u8; record_size],
         origin: PatchOrigin::Created,
         device_id: "nux-mg101".into(),
@@ -80,6 +81,35 @@ fn get_profile_reports_record_size_and_blocks() {
     assert_eq!(v["recordSize"], 8402);
     assert!(v["blocks"].as_array().unwrap().len() >= 10);
     assert!(v["namedFields"].as_object().unwrap().contains_key("send"));
+}
+
+#[test]
+fn get_diff_is_baseline_relative_not_zero_noise() {
+    // Regresja: „Zmiany" liczyły się względem zer → każdy niezerowy bajt jako
+    // 0→wartość (szum). Teraz baza to bajty z chwili utworzenia (baseline_blob).
+    let (mut s, _p, _c) = studio_with_one();
+    // Bez edycji: brak zmian względem oryginału.
+    let d0 = s
+        .execute(&Command::GetDiff {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
+    assert_eq!(d0.as_array().unwrap().len(), 0, "świeży patch = 0 zmian");
+    // Po jednej edycji BPM: dokładnie te bajty, które faktycznie się zmieniły.
+    s.execute(&Command::SetBpm {
+        target: lib_target("p1", 1),
+        bpm: 123,
+    })
+    .unwrap();
+    let d1 = s
+        .execute(&Command::GetDiff {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
+    let arr = d1.as_array().unwrap();
+    assert!(!arr.is_empty(), "po edycji są zmiany");
+    assert!(arr.len() <= 4, "tylko bajty BPM, nie cały rekord (było {})", arr.len());
+    assert_eq!(arr[0]["before"], 0, "baza = oryginał (0), nie śmieć");
 }
 
 #[test]

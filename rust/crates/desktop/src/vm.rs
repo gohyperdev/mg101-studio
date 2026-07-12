@@ -814,6 +814,7 @@ mod tests {
         LibraryPatch {
             id: id.into(),
             name: id.into(),
+            baseline_blob: vec![0u8; record_size],
             blob: vec![0u8; record_size],
             origin,
             device_id: "nux-mg101".into(),

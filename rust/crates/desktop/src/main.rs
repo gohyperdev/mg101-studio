@@ -193,6 +193,7 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_name(l("editor.name"));
     ui.set_t_bpm(l("editor.bpm"));
     ui.set_t_changes(l("inspector.changes"));
+    ui.set_t_changes_header(l("inspector.changes_header"));
     ui.set_t_binary(l("inspector.binary"));
     ui.set_t_agent(l("inspector.agent"));
     ui.set_t_mcp(l("inspector.mcp"));
@@ -203,6 +204,9 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_import(l("action.import"));
     ui.set_t_export(l("action.export"));
     ui.set_t_language(l("settings.language"));
+    ui.set_t_fetch(l("device.fetch"));
+    ui.set_t_import_dump(l("device.import_dump"));
+    ui.set_t_copy_library(l("device.copy_to_library"));
     ui.set_t_empty_slot(l("slot.empty"));
     ui.set_t_rev(l("editor.rev"));
     ui.set_t_settings(l("inspector.settings"));
@@ -417,6 +421,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     apply_labels(&ui, &vm.borrow());
     refresh(&ui, &mut vm.borrow_mut());
+    // Dropdown urządzeń w nagłówku (W6) — modele z rejestru (dziś MG-101; pod kolejne).
+    let device_names: Vec<SharedString> = mg101_desktop::device::registry()
+        .iter()
+        .map(|d| format!("{} {}", d.manufacturer, d.model).into())
+        .collect();
+    ui.set_device_models(ModelRc::new(VecModel::from(device_names)));
+    ui.set_device_index(0);
     detect_device(&ui);
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
     let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
@@ -634,7 +645,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vmc.borrow_mut().open_device_patch(&id, &name, record);
             } else {
                 vmc.borrow_mut()
-                    .report_error("brak zdekodowanego slotu — wykonaj zrzut".into());
+                    .report_error("brak zdekodowanego slotu — użyj Pobierz w nagłówku".into());
             }
             // Sync app→urządzenie: wybór presetu z banku User wysyła Program Change
             // (footswitch 1A..9D = PC 0..35). Bank Factory nie jest wybierany PC.
@@ -646,6 +657,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_active_slot(index);
             }
             refresh(&ui, &mut vmc.borrow_mut());
+        });
+    }
+
+    // Wybór modelu urządzenia z dropdownu (W6). Dziś jeden model + auto-detekcja,
+    // więc zapamiętujemy indeks (przygotowanie pod kolejne urządzenia).
+    {
+        let uw = ui.as_weak();
+        ui.on_select_device(move |idx| {
+            let Some(ui) = uw.upgrade() else { return };
+            ui.set_device_index(idx);
+        });
+    }
+
+    // Transfer: kopiuje otwarty patch (np. slot urządzenia) do Biblioteki jako
+    // trwały wpis i przełącza na zakładkę Biblioteka, żeby efekt był widoczny.
+    // Duplikat ma świeże ID, więc nie zostanie nadpisany przy kolejnym zrzucie.
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        ui.on_copy_to_library(move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let (id, rev) = {
+                let mut vm = vmc.borrow_mut();
+                match vm.selected_id() {
+                    Some(id) => {
+                        let rev = vm.detail(&id).map(|d| d.revision).unwrap_or(1);
+                        (id, rev)
+                    }
+                    None => return,
+                }
+            };
+            let mut vm = vmc.borrow_mut();
+            if let Some(new_id) = vm.duplicate(&id, rev) {
+                vm.set_tab(LibraryTab::Library);
+                vm.select(&new_id);
+            }
+            refresh(&ui, &mut vm);
         });
     }
 
@@ -848,7 +896,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for m in msgs {
                 match m {
                     DumpMsg::Progress { done, total } => {
-                        ui.set_dump_status(format!("zrzut {done}/{total} slotów…").into());
+                        ui.set_dump_status(format!("pobieranie {done}/{total} slotów…").into());
                     }
                     DumpMsg::Done { user, factory } => {
                         // Zdekoduj zajęte sloty do rekordów plikowych (8402 B) — gotowe
@@ -881,13 +929,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let (nu, nf) = (user.len(), factory.len());
                         vmc.borrow_mut()
                             .set_device_banks(to_rows(user), to_rows(factory));
-                        ui.set_dump_status(format!("zrzucono User {nu} + Factory {nf}").into());
+                        ui.set_dump_status(format!("pobrano User {nu} + Factory {nf}").into());
                         ui.set_dump_ready(!ldump.borrow().is_empty());
+                        // Na urządzeniu zawsze jest aktywny jeden preset User — po pobraniu
+                        // odwzoruj to zaznaczeniem w aplikacji, żeby edytor nie był pusty.
+                        // Preferuj znany aktywny preset (footswitch), inaczej pierwszy zajęty
+                        // slot User. Bez wysyłki PC (to odwzorowanie, nie komenda).
+                        if vmc.borrow().tab() == LibraryTab::User {
+                            let want = *aslot.borrow();
+                            let pick = if want >= 0 {
+                                want as u16
+                            } else {
+                                srecs
+                                    .borrow()
+                                    .keys()
+                                    .filter(|(b, _)| b == "user")
+                                    .map(|(_, i)| *i)
+                                    .min()
+                                    .unwrap_or(0)
+                            };
+                            let entry = srecs.borrow().get(&("user".to_string(), pick)).cloned();
+                            if let Some((name, record)) = entry {
+                                let id = format!("device-user-{pick}");
+                                vmc.borrow_mut().open_device_patch(&id, &name, record);
+                            }
+                        }
                         finished = true;
                     }
                     DumpMsg::Error(e) => {
                         vmc.borrow_mut().report_error(e);
-                        ui.set_dump_status("błąd zrzutu — patrz komunikat".into());
+                        ui.set_dump_status("błąd pobierania — patrz komunikat".into());
                         finished = true;
                     }
                 }

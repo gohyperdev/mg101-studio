@@ -98,6 +98,8 @@ export component AppWindow inherits Window {
     in property <string> dump-status;      // postęp/komunikat zrzutu
     in property <int> active-slot: -1;     // aktywny preset na urządzeniu (index User 0..35, -1=nieznany)
     in property <bool> device-live;        // trwałe połączenie MIDI (nasłuch presetów) aktywne
+    in property <[string]> device-models;  // lista modeli z rejestru (dropdown w nagłówku)
+    in property <int> device-index;        // wybrany model urządzenia w dropdownie
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -121,6 +123,7 @@ export component AppWindow inherits Window {
     in property <string> t-name;
     in property <string> t-bpm;
     in property <string> t-changes;
+    in property <string> t-changes-header;
     in property <string> t-binary;
     in property <string> t-agent;
     in property <string> t-mcp;
@@ -131,6 +134,9 @@ export component AppWindow inherits Window {
     in property <string> t-import;
     in property <string> t-export;
     in property <string> t-language;
+    in property <string> t-fetch;
+    in property <string> t-import-dump;
+    in property <string> t-copy-library;
     in property <string> t-empty-slot;
     in property <string> t-rev;
     in property <string> t-settings;
@@ -163,9 +169,64 @@ export component AppWindow inherits Window {
     callback connect-dump();                           // W2: połącz i zrzuć banki
     callback import-dump();                             // W2: import zrzutu do Biblioteki
     callback open-slot(string, int);                   // W2: otwórz slot (bank, index) w edytorze
+    callback select-device(int);                       // W6: wybór modelu urządzenia z dropdownu
+    callback copy-to-library();                        // kopiuj otwarty slot urządzenia do Biblioteki
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        // ===== Nagłówek globalny: urządzenie + pobieranie =====
+        Rectangle {
+            height: 50px;
+            background: #17171c;
+            HorizontalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                alignment: start;
+                // Stan połączenia + wybór modelu urządzenia (dropdown pod kolejne).
+                Text {
+                    text: root.device-connected ? "🎸" : "⚪";
+                    font-size: 17px;
+                    vertical-alignment: center;
+                }
+                ComboBox {
+                    min-width: 170px;
+                    model: root.device-models;
+                    current-index: root.device-index;
+                    selected(v) => { root.select-device(self.current-index); }
+                }
+                Button {
+                    text: root.t-fetch;
+                    enabled: root.device-connected && !root.dump-busy;
+                    clicked => { root.connect-dump(); }
+                }
+                Button {
+                    text: root.t-import-dump;
+                    enabled: root.dump-ready && !root.dump-busy;
+                    clicked => { root.import-dump(); }
+                }
+                Text {
+                    text: root.dump-status;
+                    color: #8a8a96;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.device-connected ? "" : root.device-label;
+                    color: #6a6a76;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+            }
+        }
 
     HorizontalBox {
         padding: 0px;
+        vertical-stretch: 1;
 
         // ===== Panel 1: zakładki + lista =====
         Rectangle {
@@ -235,41 +296,14 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // pasek urządzenia (zakładki User/Factory) — status + zrzut (W2/W6)
-                if root.active-tab != 2: Rectangle {
-                    height: 52px;
-                    background: #26262e;
-                    border-radius: 5px;
-                    VerticalBox {
-                        padding: 5px;
-                        spacing: 2px;
-                        HorizontalBox {
-                            padding: 0px;
-                            spacing: 6px;
-                            Text {
-                                text: (root.device-connected ? "🎸 " : "⚪ ") + root.device-label;
-                                color: root.device-connected ? #7fd98a : #8a8a96;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                            Rectangle { horizontal-stretch: 1; }
-                            Button {
-                                text: "Połącz i zrzuć";
-                                enabled: root.device-connected && !root.dump-busy;
-                                clicked => { root.connect-dump(); }
-                            }
-                            Button {
-                                text: "Import → Biblioteka";
-                                enabled: root.dump-ready && !root.dump-busy;
-                                clicked => { root.import-dump(); }
-                            }
-                        }
-                        if root.dump-status != "": Text {
-                            text: root.dump-status;
-                            color: #8a8a96;
-                            font-size: 10px;
-                        }
-                    }
+                // podpowiedź transferu (zakładki urządzenia): klik slotu = kopia do Biblioteki
+                if root.active-tab != 2: Text {
+                    text: root.device-connected
+                        ? "Klik slotu = otwórz i skopiuj do Biblioteki do edycji"
+                        : "Podłącz urządzenie i użyj przycisku Pobierz w nagłówku";
+                    color: #6a6a76;
+                    font-size: 11px;
+                    wrap: word-wrap;
                 }
 
                 // widok slotów urządzenia (zakładki User/Factory) — klik otwiera slot
@@ -312,7 +346,14 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // pasek akcji
+                // pasek akcji — rzędy tak, by WSZYSTKIE przyciski się mieściły (320px)
+                // Transfer (zakładki urządzenia): kopiuje otwarty slot do Biblioteki
+                // jako trwały wpis i przełącza na Bibliotekę, żeby był widoczny.
+                if root.active-tab != 2: Button {
+                    text: "⭳ " + root.t-copy-library;
+                    enabled: root.has-selection;
+                    clicked => { root.copy-to-library(); }
+                }
                 HorizontalBox {
                     spacing: 4px;
                     Button {
@@ -329,6 +370,9 @@ export component AppWindow inherits Window {
                         enabled: root.has-selection;
                         clicked => { root.duplicate(root.current-id, root.detail.revision); }
                     }
+                }
+                HorizontalBox {
+                    spacing: 4px;
                     Button {
                         text: root.t-delete;
                         enabled: root.has-selection;
@@ -338,6 +382,7 @@ export component AppWindow inherits Window {
                         text: root.t-revert;
                         clicked => { root.revert(); }
                     }
+                    Rectangle { horizontal-stretch: 1; }
                 }
 
                 // wybór języka
@@ -502,11 +547,25 @@ export component AppWindow inherits Window {
                 TabWidget {
                     Tab {
                         title: root.t-changes;
-                        ScrollView {
+                        VerticalBox {
+                            padding: 4px;
+                            padding-top: 10px;
+                            spacing: 6px;
+                            // Nagłówek: co pokazujemy (zmiany względem oryginału/importu).
                             Text {
-                                text: root.changes-text == "" ? root.t-no-changes : root.changes-text;
-                                color: #c4c4cc;
-                                wrap: word-wrap;
+                                text: root.t-changes-header;
+                                color: #8a8a96;
+                                font-size: 12px;
+                            }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                Text {
+                                    text: root.changes-text == "" ? root.t-no-changes : root.changes-text;
+                                    color: #c4c4cc;
+                                    font-family: "monospace";
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }
@@ -669,6 +728,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
     }
 
     // pasek błędu (na dole, gdy niepusty)
