@@ -860,6 +860,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 *t = t.wrapping_add(1);
                 if t.is_multiple_of(20) && dslot.borrow().is_none() {
                     detect_device(&ui);
+                    // Ostrzeżenie o równoległym QuickTone (konkurencja o port + zmiany
+                    // w QT nie emitują Program Change → nasz sync ich nie widzi).
+                    ui.set_qt_running(mg101_desktop::device::quicktone_running());
                     let connected = ui.get_device_connected();
                     if connected && psync.borrow().is_none() {
                         // Otwórz trwałe łącze sync (Program Change w obie strony).

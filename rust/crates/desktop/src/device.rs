@@ -51,6 +51,20 @@ pub fn detect() -> Option<&'static DeviceDescriptor> {
         .find(|d| ports.iter().any(|p| p.contains(d.port_needle)))
 }
 
+/// Czy edytor QuickTone (NUX) działa równolegle. Ważne dla użytkownika: QT i nasza
+/// aplikacja konkurują o port MIDI, a zmiany presetu wykonane w QT NIE emitują
+/// Program Change, więc nasz nasłuch ich nie zobaczy (sync może się rozjechać).
+/// Lekki sygnał ostrzegawczy — nie blokuje działania. macOS/Linux: `pgrep`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn quicktone_running() -> bool {
+    std::process::Command::new("pgrep")
+        .arg("-i")
+        .arg("quicktone")
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
 /// Pojedynczy zrzucony slot (surowy blob wire + metadane widoku).
 #[derive(Debug, Clone)]
 pub struct SlotDump {

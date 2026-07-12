@@ -104,6 +104,7 @@ export component AppWindow inherits Window {
     in property <bool> device-live;        // trwałe połączenie MIDI (nasłuch presetów) aktywne
     in property <[string]> device-models;  // lista modeli z rejestru (dropdown w nagłówku)
     in property <int> device-index;        // wybrany model urządzenia w dropdownie
+    in property <bool> qt-running;         // QuickTone działa równolegle (ostrzeżenie sync)
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -230,6 +231,14 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 Rectangle { horizontal-stretch: 1; }
+                // Ostrzeżenie: QuickTone działa równolegle — sync może się rozjechać
+                // (zmiany presetu w QT nie emitują Program Change, którego nasłuchujemy).
+                if root.qt-running: Text {
+                    text: "⚠ QuickTone działa — sync presetu może być niepełny";
+                    color: #e0a020;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
                 Text {
                     text: root.device-connected ? "" : root.device-label;
                     color: #6a6a76;
