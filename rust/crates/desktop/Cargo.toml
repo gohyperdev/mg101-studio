@@ -34,6 +34,11 @@ keyring = { version = "3", default-features = false, features = [
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 slint-build = "1.8"
 
+# Tylko dla przykładów diagnostycznych (midi_monitor) — bezpośredni dostęp do
+# wszystkich portów MIDI, poza abstrakcją MidirLink (jeden port).
+[dev-dependencies]
+midir = "0.10"
+
 [lib]
 name = "mg101_desktop"
 path = "src/lib.rs"
