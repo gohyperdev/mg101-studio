@@ -82,6 +82,8 @@ pub struct ParamRow {
     pub enum_label: String,
     /// Enum: wartość surowa następnego stanu (cykl) — do przełącznika.
     pub enum_next: i64,
+    /// Enum: etykieta następnego stanu (do napisu na przycisku, np. „→ PRECEDE").
+    pub enum_next_label: String,
     /// Offset bajtu w rekordzie pliku — spina wiersz z panelami Binary/Changes.
     pub offset: i64,
 }
@@ -767,6 +769,7 @@ fn block_from_json(v: &Value) -> BlockRow {
                         display: s("display"),
                         enum_label: s("enum_label"),
                         enum_next: p.get("enum_next").and_then(Value::as_i64).unwrap_or(0),
+                        enum_next_label: s("enum_next_label"),
                         offset: p.get("offset").and_then(Value::as_i64).unwrap_or(-1),
                     }
                 })

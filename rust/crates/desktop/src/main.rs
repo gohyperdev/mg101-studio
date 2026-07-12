@@ -156,6 +156,7 @@ fn detail_to_ui(vm: &mut Vm, d: &mg101_desktop::PatchDetail) -> DetailUi {
                     display: p.display.clone().into(),
                     enum_label: p.enum_label.clone().into(),
                     enum_next: p.enum_next as i32,
+                    enum_next_label: p.enum_next_label.clone().into(),
                     addr: if p.offset >= 0 {
                         format!("0x{:04x}", p.offset).into()
                     } else {
@@ -462,6 +463,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Aktywny preset na urządzeniu (index User 0..35, -1 = nieznany) — mirror
     // `ui.active-slot`, aktualizowany z footswitcha i wyboru w aplikacji.
     let active_slot: Rc<RefCell<i32>> = Rc::new(RefCell::new(-1));
+    // Czy pierwszy automatyczny Fetch wykonano dla bieżącego połączenia (reset przy
+    // odłączeniu). Po wykryciu urządzenia pobieramy banki raz, bez klikania.
+    let auto_fetched: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
     // Makro spinające callback z VM: pożycza VM, wykonuje, odświeża okno.
     macro_rules! wire {
@@ -819,6 +823,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let srecs = slot_records.clone();
         let psync = presync.clone();
         let aslot = active_slot.clone();
+        let afetch = auto_fetched.clone();
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
@@ -875,6 +880,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_device_live(false);
                         *aslot.borrow_mut() = -1;
                         ui.set_active_slot(-1);
+                    }
+                    if !connected {
+                        *afetch.borrow_mut() = false; // reset — kolejne podłączenie znów pobierze
+                    }
+                    // Pierwszy Fetch automatycznie po wykryciu urządzenia (raz na połączenie).
+                    if connected && !*afetch.borrow() && dslot.borrow().is_none() {
+                        *afetch.borrow_mut() = true;
+                        ui.invoke_connect_dump();
                     }
                 }
             }

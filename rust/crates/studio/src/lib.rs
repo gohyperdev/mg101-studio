@@ -387,6 +387,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                                     // następnego stanu (do przełącznika/toggle).
                                     "enum_label": param.enum_label(raw),
                                     "enum_next": param.enum_next(raw),
+                                    "enum_next_label": param.enum_label(param.enum_next(raw)),
                                 })
                             })
                             .collect()

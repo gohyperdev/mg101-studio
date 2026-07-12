@@ -23,8 +23,9 @@ export struct ParamRowUi {
     midi-cc: int, // -1 = nieznany
     confirmed: bool, // false = wartość/semantyka "inferred"
     display: string, // wartość fizyczna (dB/Hz), pusta gdy brak wzoru
-    enum-label: string, // enum: etykieta bieżącego stanu (np. PRECEDE)
-    enum-next: int,     // enum: wartość surowa następnego stanu (do toggle)
+    enum-label: string,      // enum: etykieta bieżącego stanu (np. PRECEDE)
+    enum-next: int,          // enum: wartość surowa następnego stanu (do toggle)
+    enum-next-label: string, // enum: etykieta następnego stanu (napis na przycisku)
     addr: string,       // offset bajtu w hex (np. "0x0029") — spina z Binary/Changes
 }
 
@@ -530,7 +531,7 @@ export component AppWindow inherits Window {
                                         vertical-alignment: center;
                                     }
                                     if p.control == "enum": Button {
-                                        text: "⇄";
+                                        text: "→ " + p.enum-next-label;
                                         clicked => { root.set-param(root.detail.id, root.detail.revision, blk.block, p.name, p.enum-next, p.midi-cc); }
                                         Tooltip { text: @markdown("\{root.t-tip-toggle}"); }
                                     }

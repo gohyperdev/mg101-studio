@@ -105,7 +105,9 @@ const MAP: &[(usize, Chan, usize)] = &[
     (40, B, 0x54),
     // sr / patch-level
     (43, B, 0x5a), // patch.min
+    (43, A, 0x5b), // patch.max  (empiria: (43,A) == plik 0x5b na 36 fabrycznych)
     (44, B, 0x5c), // patch.level
+    (44, A, 0x5d), // patch.position (wire 0=POSTERIOR; translacja na plik 128 w decode)
     // BPM (msb, lsb) — 7-bit każdy
     (45, A, 0x5f),
     (46, B, 0x60),
@@ -168,6 +170,15 @@ pub fn decode_slot(payload: &[u8]) -> Result<Vec<u8>, WireError> {
     }
     for &(off, fi, ch) in NAME_MAP {
         file[off] = frame(payload, fi, ch);
+    }
+    // POSITION (P.L, offset 0x5d): wire koduje POSTERIOR jako 0, a format pliku
+    // .mg101patch jako 128 (0x80). Tłumaczymy, by import z urządzenia pokazywał
+    // POSTERIOR/PRECEDE spójnie z plikiem (PRECEDE = 1 w obu). Zweryfikowane
+    // bajt-w-bajt: POSTERIOR (wire 0 → plik 128) na 36 patchach fabrycznych.
+    // PRECEDE (wire 1 → plik 1) wywnioskowane z symetrii — do potwierdzenia
+    // zrzutem presetu ustawionego na PRECEDE na sprzęcie.
+    if file[0x5d] == 0 {
+        file[0x5d] = 128;
     }
     Ok(file)
 }
@@ -283,5 +294,21 @@ mod tests {
     fn rejects_wrong_length() {
         assert!(decode_slot(&[0u8; 10]).is_err());
         assert!(decode_name(&[0u8; 10]).is_empty());
+    }
+
+    #[test]
+    fn decodes_pl_max_and_position_from_device_wire() {
+        // Regresja: import z urządzenia pokazywał patch_max i POSITION jako 0, bo
+        // offsety 0x5b i 0x5d nie były w MAP. 0x5b=(43,A); 0x5d=(44,A) z translacją
+        // wire 0 (POSTERIOR) → plik 128. Sprawdzamy zgodność z oracle plikowym.
+        let p = profile();
+        let orecs = Container::split(ORACLE, p.record_size).unwrap();
+        let wire = factory_wire();
+        for k in 0..36 {
+            let d = decode_slot(&wire[k]).unwrap();
+            assert_eq!(d[0x5b], orecs[k][0x5b], "patch_max slot {k}");
+            assert_eq!(d[0x5d], 128, "POSTERIOR=128 (fabryczny) slot {k}");
+            assert_eq!(d[0x5d], orecs[k][0x5d], "POSITION zgodny z plikiem slot {k}");
+        }
     }
 }
