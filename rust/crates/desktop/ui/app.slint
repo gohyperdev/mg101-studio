@@ -27,13 +27,12 @@ export struct ParamRowUi {
 
 export struct BlockRowUi {
     block: string,
+    icon: string,       // generyczna ikona typu bloku (nie modelu)
     model-name: string,
     bypassed: bool,
     params: [ParamRowUi],
     models: [string],   // nazwy modeli dostępnych w bloku (picker)
     model-index: int,   // indeks aktywnego modelu w `models`
-    image: image,       // grafika modelu (pusta gdy brak; ładowana w runtime)
-    has-image: bool,
 }
 
 export struct ChatRowUi {
@@ -413,12 +412,11 @@ export component AppWindow inherits Window {
                                 padding: 8px;
                                 spacing: 4px;
                                 HorizontalBox {
-                                    // Grafika modelu (W4) — ładowana lokalnie, gdy jest.
-                                    if blk.has-image: Image {
-                                        source: blk.image;
-                                        width: 56px;
-                                        height: 44px;
-                                        image-fit: contain;
+                                    // Generyczna ikona typu bloku (bez skeuomorfizmu QT).
+                                    Text {
+                                        text: blk.icon;
+                                        font-size: 18px;
+                                        vertical-alignment: center;
                                     }
                                     Text {
                                         text: blk.block;
