@@ -2,7 +2,7 @@
 // [inspektor]. Cała logika jest w Rust (ViewModel); tu tylko widok i wywołania
 // callbacków. Struktury lustrzane do desktop::vm.
 
-import { Button, ListView, LineEdit, TextEdit, TabWidget, CheckBox, ComboBox, VerticalBox, HorizontalBox, GroupBox, ScrollView } from "std-widgets.slint";
+import { Button, ListView, LineEdit, TextEdit, TabWidget, CheckBox, ComboBox, Slider, VerticalBox, HorizontalBox, GroupBox, ScrollView } from "std-widgets.slint";
 
 export struct PatchRowUi {
     id: string,
@@ -111,6 +111,7 @@ export component AppWindow inherits Window {
     in property <string> midi-log;         // bufor monitora MIDI (linie)
     in property <bool> midi-monitor-on;    // nasłuch monitora włączony
     in property <int> exp-index: -1;       // centralne przypisanie EXP (0=off..6=RVB, -1=nieznane)
+    in property <int> drum-tempo: -1;      // aktualne tempo DRUM (BPM, -1=nieznane) — odczyt SysEx
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -197,6 +198,7 @@ export component AppWindow inherits Window {
     callback clear-midi-log();                         // monitor MIDI: wyczyść
     callback save-midi-log();                          // monitor MIDI: zapisz do pliku
     callback set-exp(int);                             // centralne EXP: wyślij CC79 = index
+    callback send-control(int, int);                   // generyczny CC: wyślij CC<cc> = <value> (DRUM/LOOP)
 
     VerticalBox {
         padding: 0px;
@@ -832,6 +834,79 @@ export component AppWindow inherits Window {
                                 read-only: true;
                                 wrap: no-wrap;
                                 text: root.midi-log == "" ? "(brak komunikatów)" : root.midi-log;
+                            }
+                        }
+                    }
+                    Tab {
+                        title: "DRUM";
+                        VerticalBox {
+                            padding: 8px;
+                            spacing: 10px;
+                            alignment: start;
+                            Text {
+                                text: root.device-connected ? "Sterowanie perkusją (MIDI CC → urządzenie)"
+                                    : "Podłącz urządzenie, by sterować";
+                                color: #8a8a96; font-size: 11px; wrap: word-wrap;
+                            }
+                            // Play/Stop (CC81)
+                            HorizontalBox {
+                                spacing: 8px; alignment: start;
+                                Button {
+                                    text: "▶ Play";
+                                    enabled: root.device-connected;
+                                    clicked => { root.send-control(81, 1); }
+                                }
+                                Button {
+                                    text: "⏹ Stop";
+                                    enabled: root.device-connected;
+                                    clicked => { root.send-control(81, 0); }
+                                }
+                                Text {
+                                    text: root.drum-tempo >= 0 ? root.drum-tempo + " BPM" : "— BPM";
+                                    color: #c8b6ff; vertical-alignment: center;
+                                }
+                            }
+                            // Volume (CC83, 0..100)
+                            Text { text: "Volume"; color: #8a8a96; font-size: 11px; }
+                            drum-vol := Slider {
+                                minimum: 0; maximum: 100; value: 50;
+                                enabled: root.device-connected;
+                                changed(v) => { root.send-control(83, Math.round(v)); }
+                            }
+                            // Preset/wzorzec (CC82)
+                            Text { text: "Wzorzec (preset)"; color: #8a8a96; font-size: 11px; }
+                            drum-preset := Slider {
+                                minimum: 0; maximum: 99; value: 0;
+                                enabled: root.device-connected;
+                                changed(v) => { root.send-control(82, Math.round(v)); }
+                            }
+                            HorizontalBox {
+                                spacing: 8px; alignment: start;
+                                Button {
+                                    text: "◀ poprz.";
+                                    enabled: root.device-connected;
+                                    clicked => {
+                                        drum-preset.value = drum-preset.value <= 0 ? 0 : drum-preset.value - 1;
+                                        root.send-control(82, Math.round(drum-preset.value));
+                                    }
+                                }
+                                Text {
+                                    width: 40px;
+                                    text: Math.round(drum-preset.value);
+                                    color: white; horizontal-alignment: center; vertical-alignment: center;
+                                }
+                                Button {
+                                    text: "nast. ▶";
+                                    enabled: root.device-connected;
+                                    clicked => {
+                                        drum-preset.value = drum-preset.value >= 99 ? 99 : drum-preset.value + 1;
+                                        root.send-control(82, Math.round(drum-preset.value));
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "Tempo: odczyt z urządzenia (zmiana tempa z aplikacji — wkrótce, wymaga komendy SysEx).";
+                                color: #6a6a76; font-size: 10px; wrap: word-wrap;
                             }
                         }
                     }

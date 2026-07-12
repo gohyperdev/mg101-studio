@@ -760,6 +760,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Generyczne sterowanie CC (DRUM/LOOP): wyślij CC<cc> = <value> na urządzenie.
+    {
+        let psync = presync.clone();
+        ui.on_send_control(move |cc, value| {
+            if (0..=127).contains(&cc) && (0..=127).contains(&value) {
+                if let Some(s) = psync.borrow().as_ref() {
+                    s.send_cc(cc as u8, value as u8);
+                }
+            }
+        });
+    }
+
     // Monitor MIDI: włącz/wyłącz nasłuch wszystkich komunikatów.
     {
         let uw = ui.as_weak();
@@ -1007,6 +1019,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Centralny EXP zmieniony guzikiem na urządzeniu → odwzoruj w dropdownie.
                         mg101_desktop::device::SyncEvent::ExpTarget(v) => {
                             ui.set_exp_index(v as i32);
+                        }
+                        // Tempo DRUM zmienione na urządzeniu → pokaż BPM.
+                        mg101_desktop::device::SyncEvent::DrumTempo(bpm) => {
+                            ui.set_drum_tempo(bpm as i32);
                         }
                     }
                 }

@@ -164,6 +164,8 @@ pub enum SyncEvent {
     PresetChanged(u8),
     /// Zmieniono centralne przypisanie pedału EXP (CC79, wartość 0..6).
     ExpTarget(u8),
+    /// Zmieniono tempo DRUM (BPM) — z ramki SysEx `70 7E 02 19` (14-bit hi*128+lo).
+    DrumTempo(u16),
 }
 
 /// Trwała sesja MIDI do **dwukierunkowej** synchronizacji wybranego presetu.
@@ -231,6 +233,15 @@ impl PresetSync {
                             && framed[1] == CC_EXP_TARGET
                         {
                             let _ = ev_tx.send(SyncEvent::ExpTarget(framed[2]));
+                        }
+                        // Tempo DRUM: ramka `F0 43 58 70 7E 02 19 03 32 32 32 <hi> <lo> 00 F7`
+                        // (15 B). BPM = hi*128 + lo (7-bit dane SysEx).
+                        if framed.len() == 15
+                            && framed[0] == 0xF0
+                            && framed[1..7] == [0x43, 0x58, 0x70, 0x7E, 0x02, 0x19]
+                        {
+                            let bpm = (framed[11] as u16) * 128 + framed[12] as u16;
+                            let _ = ev_tx.send(SyncEvent::DrumTempo(bpm));
                         }
                         let _ = mon_tx.send(framed);
                     }
