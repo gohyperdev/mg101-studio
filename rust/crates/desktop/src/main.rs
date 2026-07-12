@@ -748,6 +748,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Centralne przypisanie EXP: wyślij CC79 = index (0=off..6=RVB) na urządzenie.
+    {
+        let psync = presync.clone();
+        ui.on_set_exp(move |idx| {
+            if (0..=6).contains(&idx) {
+                if let Some(s) = psync.borrow().as_ref() {
+                    s.send_cc(mg101_desktop::device::CC_EXP_TARGET, idx as u8);
+                }
+            }
+        });
+    }
+
     // Monitor MIDI: włącz/wyłącz nasłuch wszystkich komunikatów.
     {
         let uw = ui.as_weak();
@@ -976,17 +988,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .as_ref()
                     .map(|s| s.poll())
                     .unwrap_or_default();
-                for mg101_desktop::device::SyncEvent::PresetChanged(n) in events {
-                    let idx = n as i32;
-                    if *aslot.borrow() != idx {
-                        *aslot.borrow_mut() = idx;
-                        ui.set_active_slot(idx);
-                        let key = ("user".to_string(), n as u16);
-                        let entry = srecs.borrow().get(&key).cloned();
-                        if let Some((name, record)) = entry {
-                            let id = format!("device-user-{n}");
-                            vmc.borrow_mut().open_device_patch(&id, &name, record);
-                            refresh(&ui, &mut vmc.borrow_mut());
+                for ev in events {
+                    match ev {
+                        mg101_desktop::device::SyncEvent::PresetChanged(n) => {
+                            let idx = n as i32;
+                            if *aslot.borrow() != idx {
+                                *aslot.borrow_mut() = idx;
+                                ui.set_active_slot(idx);
+                                let key = ("user".to_string(), n as u16);
+                                let entry = srecs.borrow().get(&key).cloned();
+                                if let Some((name, record)) = entry {
+                                    let id = format!("device-user-{n}");
+                                    vmc.borrow_mut().open_device_patch(&id, &name, record);
+                                    refresh(&ui, &mut vmc.borrow_mut());
+                                }
+                            }
+                        }
+                        // Centralny EXP zmieniony guzikiem na urządzeniu → odwzoruj w dropdownie.
+                        mg101_desktop::device::SyncEvent::ExpTarget(v) => {
+                            ui.set_exp_index(v as i32);
                         }
                     }
                 }

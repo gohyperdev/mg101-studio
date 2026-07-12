@@ -153,11 +153,17 @@ impl Dumper {
     }
 }
 
+/// Numer MIDI CC centralnego ustawienia przypisania pedału EXP (0=off,1=WAH,
+/// 2=EFX,3=AMP,4=MOD,5=DLY,6=RVB). Zmierzone monitorem MIDI.
+pub const CC_EXP_TARGET: u8 = 0x4F; // 79
+
 /// Zdarzenie z trwałej sesji synchronizacji presetu (urządzenie → host).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncEvent {
     /// Na urządzeniu wybrano preset o numerze Program Change (0..).
     PresetChanged(u8),
+    /// Zmieniono centralne przypisanie pedału EXP (CC79, wartość 0..6).
+    ExpTarget(u8),
 }
 
 /// Trwała sesja MIDI do **dwukierunkowej** synchronizacji wybranego presetu.
@@ -219,6 +225,12 @@ impl PresetSync {
                         }
                         if framed.len() == 2 && (framed[0] & 0xF0) == 0xC0 {
                             let _ = ev_tx.send(SyncEvent::PresetChanged(framed[1]));
+                        }
+                        if framed.len() == 3
+                            && (framed[0] & 0xF0) == 0xB0
+                            && framed[1] == CC_EXP_TARGET
+                        {
+                            let _ = ev_tx.send(SyncEvent::ExpTarget(framed[2]));
                         }
                         let _ = mon_tx.send(framed);
                     }

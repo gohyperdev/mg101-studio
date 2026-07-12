@@ -2,7 +2,7 @@
 // [inspektor]. Cała logika jest w Rust (ViewModel); tu tylko widok i wywołania
 // callbacków. Struktury lustrzane do desktop::vm.
 
-import { Button, ListView, LineEdit, TabWidget, CheckBox, ComboBox, VerticalBox, HorizontalBox, GroupBox, ScrollView } from "std-widgets.slint";
+import { Button, ListView, LineEdit, TextEdit, TabWidget, CheckBox, ComboBox, VerticalBox, HorizontalBox, GroupBox, ScrollView } from "std-widgets.slint";
 
 export struct PatchRowUi {
     id: string,
@@ -110,6 +110,7 @@ export component AppWindow inherits Window {
     in property <bool> qt-running;         // QuickTone działa równolegle (ostrzeżenie sync)
     in property <string> midi-log;         // bufor monitora MIDI (linie)
     in property <bool> midi-monitor-on;    // nasłuch monitora włączony
+    in property <int> exp-index: -1;       // centralne przypisanie EXP (0=off..6=RVB, -1=nieznane)
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -195,6 +196,7 @@ export component AppWindow inherits Window {
     callback toggle-midi-monitor();                    // monitor MIDI: włącz/wyłącz
     callback clear-midi-log();                         // monitor MIDI: wyczyść
     callback save-midi-log();                          // monitor MIDI: zapisz do pliku
+    callback set-exp(int);                             // centralne EXP: wyślij CC79 = index
 
     VerticalBox {
         padding: 0px;
@@ -239,6 +241,18 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 Rectangle { horizontal-stretch: 1; }
+                // Centralne przypisanie pedału EXP (CC79) — zmiana wysyła na urządzenie.
+                if root.device-connected: Text {
+                    text: "EXP:";
+                    color: #8a8a96;
+                    vertical-alignment: center;
+                }
+                if root.device-connected: ComboBox {
+                    min-width: 90px;
+                    model: ["---", "WAH", "EFX", "AMP", "MOD", "DLY", "RVB"];
+                    current-index: root.exp-index;
+                    selected(v) => { root.set-exp(self.current-index); }
+                }
                 // Ostrzeżenie: QuickTone działa równolegle — sync może się rozjechać
                 // (zmiany presetu w QT nie emitują Program Change, którego nasłuchujemy).
                 if root.qt-running: Text {
@@ -812,15 +826,12 @@ export component AppWindow inherits Window {
                                 font-size: 11px;
                                 wrap: word-wrap;
                             }
-                            ScrollView {
+                            // TextEdit read-only: log przewijalny i ZAZNACZALNY (kopiowanie Cmd/Ctrl+C).
+                            TextEdit {
                                 vertical-stretch: 1;
-                                Text {
-                                    text: root.midi-log == "" ? "(brak komunikatów)" : root.midi-log;
-                                    color: #c4c4cc;
-                                    font-family: "monospace";
-                                    font-size: 12px;
-                                    wrap: no-wrap;
-                                }
+                                read-only: true;
+                                wrap: no-wrap;
+                                text: root.midi-log == "" ? "(brak komunikatów)" : root.midi-log;
                             }
                         }
                     }
