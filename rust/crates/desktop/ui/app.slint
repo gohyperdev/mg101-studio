@@ -205,6 +205,11 @@ export component AppWindow inherits Window {
     callback set-exp(int);                             // centralne EXP: wyślij CC79 = index
     callback send-control(int, int);                   // generyczny CC: wyślij CC<cc> = <value> (DRUM/LOOP)
     callback send-drum-tempo(int);                     // DRUM tempo: wyślij ramkę SysEx BPM
+    callback ensure-agent-key();                       // leniwy odczyt klucza API z magazynu
+    // Indeksy zakładek prawego panelu, które korzystają z agenta (kolejność Tab niżej:
+    // Changes 0, Binary 1, Agent 2, MCP 3, MIDI 4, DRUM 5, Ustawienia 6).
+    property <int> tab-agent: 2;
+    property <int> tab-settings: 6;
 
     VerticalBox {
         padding: 0px;
@@ -647,7 +652,15 @@ export component AppWindow inherits Window {
             background: #1e1e24;
             VerticalBox {
                 padding: 8px;
-                TabWidget {
+                right-tabs := TabWidget {
+                    // Klucz API czytamy z magazynu LENIWIE — tylko gdy użytkownik wejdzie
+                    // w zakładkę korzystającą z agenta. Zakładki bez agenta (MIDI, DRUM…)
+                    // nie mogą wywołać okna zgody Keychain. Indeksy = kolejność Tab poniżej.
+                    changed current-index => {
+                        if (self.current-index == root.tab-agent || self.current-index == root.tab-settings) {
+                            root.ensure-agent-key();
+                        }
+                    }
                     Tab {
                         title: root.t-changes;
                         VerticalBox {

@@ -412,6 +412,34 @@ fn detect_device(ui: &AppWindow) {
     }
 }
 
+/// Stan leniwego odczytu klucza API z systemowego magazynu sekretów.
+/// Odczyt zdarza się **raz**, przy pierwszym użyciu agenta — nie na starcie aplikacji.
+enum KeyLoad {
+    /// Jeszcze nie pytaliśmy magazynu.
+    Idle,
+    /// Odczyt trwa w tle; wynik przyjdzie kanałem.
+    Loading(std::sync::mpsc::Receiver<Option<String>>),
+    /// Magazyn już odpowiedział (kluczem albo jego brakiem) — nie pytamy ponownie.
+    Done,
+}
+
+/// Startuje odczyt klucza z magazynu, jeśli jeszcze go nie mamy i nie trwa.
+/// Idempotentne: kolejne wywołania nic nie robią (żadnego drugiego okna Keychain).
+fn ensure_agent_key(vm: &Vm, state: &Rc<RefCell<KeyLoad>>) {
+    let mut s = state.borrow_mut();
+    if !matches!(*s, KeyLoad::Idle) {
+        return;
+    }
+    // Klucz wpisany ręcznie w Ustawieniach → magazyn niepotrzebny.
+    if !vm.agent_config().api_key.is_empty() {
+        *s = KeyLoad::Done;
+        return;
+    }
+    *s = KeyLoad::Loading(mg101_desktop::keychain::load_key_async(
+        vm.agent_config().provider,
+    ));
+}
+
 /// Obsługuje komendy DRUM (sterowanie na żywo) agenta, kierując je na urządzenie
 /// zamiast do Studio. Zwraca `None`, gdy to nie komenda DRUM (obsłuży ją Studio).
 fn handle_drum_command(
@@ -520,14 +548,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
     let runner: Rc<RefCell<Option<ChatRunner>>> = Rc::new(RefCell::new(None));
 
-    // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — ODCZYT W TLE.
-    // Na macOS dostęp do Keychain potrafi zablokować wątek do czasu zgody w oknie
-    // systemowym; robienie tego na wątku UI przed `run()` zawieszało start okna.
-    // Odbiornik odpytujemy w pompie i wstrzykujemy klucz, gdy dotrze.
-    let key_provider = vm.borrow().agent_config().provider;
-    let key_rx: Rc<RefCell<Option<std::sync::mpsc::Receiver<Option<String>>>>> = Rc::new(
-        RefCell::new(Some(mg101_desktop::keychain::load_key_async(key_provider))),
-    );
+    // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — ODCZYT LENIWY.
+    // NIE czytamy go na starcie: na macOS pierwszy dostęp do Keychain potrafi
+    // wyświetlić okno zgody, a użytkownik, który nie korzysta z agenta, nie powinien
+    // go w ogóle oglądać. Odczyt startuje przy pierwszym użyciu agenta (wysłanie
+    // wiadomości) albo wejściu w zakładkę Agent/Ustawienia — patrz `ensure_agent_key`.
+    // Odczyt biegnie w tle; wynik odbieramy w pompie (nie blokujemy wątku UI).
+    let key_load: Rc<RefCell<KeyLoad>> = Rc::new(RefCell::new(KeyLoad::Idle));
+    // Wiadomość czekająca na klucz: agent startuje dopiero, gdy magazyn odpowie.
+    let pending_run: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
     // Zasianie Biblioteki przy pierwszym starcie (pusta) — 36 patchy fabrycznych,
     // parytet v1. Trwałe (SqliteStore), więc dzieje się raz. Bez sprzętu.
@@ -945,20 +974,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Wysłanie wiadomości do agenta: startuje wątek przebiegu.
+    // Leniwy odczyt klucza: wejście w zakładkę agenta/ustawień. Ustawienia MUSZĄ
+    // pokazać zapisany klucz — inaczej „Zapisz" z pustym polem skasowałby go z magazynu.
+    {
+        let vmc = vm.clone();
+        let ks = key_load.clone();
+        ui.on_ensure_agent_key(move || {
+            ensure_agent_key(&vmc.borrow(), &ks);
+        });
+    }
+
+    // Wysłanie wiadomości do agenta: startuje wątek przebiegu. Gdy klucza jeszcze
+    // nie ma, najpierw czytamy go z magazynu, a przebieg rusza w pompie po odczycie.
     {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let slot = runner.clone();
+        let ks = key_load.clone();
+        let pending = pending_run.clone();
         ui.on_send_message(move |text| {
             let Some(ui) = uw.upgrade() else { return };
             let mut vm = vmc.borrow_mut();
-            if slot.borrow().is_some() {
-                return; // przebieg już trwa
+            if slot.borrow().is_some() || *pending.borrow() {
+                return; // przebieg już trwa (albo czeka na klucz)
             }
-            if !vm.is_agent_configured() {
-                vm.report_error("agent nieskonfigurowany (uzupełnij ustawienia AI)".into());
-            } else {
+            if vm.is_agent_configured() {
                 vm.push_user_message(&text);
                 let config = vm.agent_config().clone();
                 let history = vm.chat_history();
@@ -968,6 +1008,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     history,
                 ));
                 ui.set_agent_busy(true);
+                refresh(&ui, &mut vm);
+                return;
+            }
+            // Brak klucza — spróbuj magazynu (pierwsze użycie agenta).
+            ensure_agent_key(&vm, &ks);
+            if matches!(*ks.borrow(), KeyLoad::Loading(_)) {
+                // Wiadomość ląduje w historii od razu; przebieg wystartuje po odczycie.
+                vm.push_user_message(&text);
+                *pending.borrow_mut() = true;
+                ui.set_agent_busy(true);
+            } else {
+                vm.report_error("agent nieskonfigurowany (uzupełnij ustawienia AI)".into());
             }
             refresh(&ui, &mut vm);
         });
@@ -1037,7 +1089,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let dslot = dumper.clone();
-        let krx = key_rx.clone();
+        let krx = key_load.clone();
+        let pending = pending_run.clone();
+        let arunner = runner.clone();
         let ldump = last_dump.clone();
         let srecs = slot_records.clone();
         let psync = presync.clone();
@@ -1048,30 +1102,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tick = RefCell::new(0u32);
         device_pump.start(TimerMode::Repeated, Duration::from_millis(100), move || {
             let Some(ui) = uw.upgrade() else { return };
-            // Klucz API z Keychain (odczyt w tle) — wstrzyknij, gdy dotrze.
+            // Klucz API z Keychain (leniwy odczyt w tle) — wstrzyknij, gdy dotrze,
+            // i wystartuj przebieg agenta, jeśli wiadomość czekała na klucz.
             {
-                let mut slot = krx.borrow_mut();
-                if let Some(rx) = slot.as_ref() {
-                    if let Ok(result) = rx.try_recv() {
-                        *slot = None; // jednorazowo
-                        let mut vm = vmc.borrow_mut();
-                        let mut cfg = vm.agent_config().clone();
-                        if cfg.api_key.is_empty() {
-                            match result {
-                                Some(key) => {
-                                    eprintln!(
-                                        "Klucz API wczytany z magazynu (dostawca {:?}, długość {}).",
-                                        cfg.provider,
-                                        key.len()
-                                    );
-                                    cfg.api_key = key;
-                                    vm.set_agent_config(cfg);
-                                    ui.set_cfg_key(vm.agent_config().api_key.clone().into());
-                                }
-                                None => eprintln!("Brak klucza API w magazynie — wpisz w Ustawieniach."),
+                let arrived = match &*krx.borrow() {
+                    KeyLoad::Loading(rx) => rx.try_recv().ok(),
+                    _ => None,
+                };
+                if let Some(result) = arrived {
+                    *krx.borrow_mut() = KeyLoad::Done; // magazyn odpowiedział — nie pytamy ponownie
+                    let mut vm = vmc.borrow_mut();
+                    let mut cfg = vm.agent_config().clone();
+                    if cfg.api_key.is_empty() {
+                        match result {
+                            Some(key) => {
+                                // NIGDY nie logujemy wartości klucza — tylko dostawca i długość.
+                                eprintln!(
+                                    "Klucz API wczytany z magazynu (dostawca {:?}, długość {}).",
+                                    cfg.provider,
+                                    key.len()
+                                );
+                                cfg.api_key = key;
+                                vm.set_agent_config(cfg);
+                                ui.set_cfg_key(vm.agent_config().api_key.clone().into());
+                            }
+                            None => {
+                                eprintln!("Brak klucza API w magazynie — wpisz w Ustawieniach.")
                             }
                         }
                     }
+                    // Wiadomość odłożona do czasu odczytu klucza.
+                    if *pending.borrow() {
+                        *pending.borrow_mut() = false;
+                        if vm.is_agent_configured() && arunner.borrow().is_none() {
+                            let config = vm.agent_config().clone();
+                            let history = vm.chat_history();
+                            *arunner.borrow_mut() = Some(ChatRunner::start(
+                                config,
+                                SYSTEM_PROMPT.to_string(),
+                                history,
+                            ));
+                        } else {
+                            vm.report_error(
+                                "agent nieskonfigurowany (uzupełnij ustawienia AI)".into(),
+                            );
+                            ui.set_agent_busy(false);
+                        }
+                    }
+                    refresh(&ui, &mut vm);
                 }
             }
             // Detekcja hotplug co ~2 s (gdy nie trwa zrzut) + utrzymanie trwałej
