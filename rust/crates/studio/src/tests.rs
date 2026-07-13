@@ -47,6 +47,7 @@ fn patch(id: &str, record_size: usize) -> LibraryPatch {
         exact_hash: "e".into(),
         tags: BTreeSet::new(),
         groups: BTreeSet::new(),
+        meta: Default::default(),
         created_at: 0,
         updated_at: 0,
         revision: 1,
@@ -515,4 +516,212 @@ fn delete_clears_dangling_selection() {
     .unwrap();
     let sel = s.execute(&Command::GetSelection).unwrap();
     assert_eq!(sel["selectedPatchID"], serde_json::Value::Null);
+}
+
+// --- Metadane i kolekcje ---
+
+#[test]
+fn set_patch_meta_assigns_authorship_and_bumps_revision() {
+    let (mut s, _p, _c) = studio_with_one();
+    let v = s
+        .execute(&Command::SetPatchMeta {
+            target: lib_target("p1", 1),
+            meta: mg101_commands::MetaPatch {
+                author: Some("Jimmy Lin".into()),
+                source: Some("JL-British Pack".into()),
+                license: Some("darmowe, bez redystrybucji".into()),
+                rating: Some(4),
+                favorite: Some(true),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert_eq!(v["success"], true);
+    let rev = v["revision"].as_u64().unwrap();
+    assert!(rev > 1, "rewizja powinna wzrosnąć");
+
+    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    assert_eq!(p["meta"]["author"], "Jimmy Lin");
+    assert_eq!(p["meta"]["source"], "JL-British Pack");
+    assert_eq!(p["meta"]["license"], "darmowe, bez redystrybucji");
+    assert_eq!(p["meta"]["rating"], 4);
+    assert_eq!(p["meta"]["favorite"], true);
+}
+
+#[test]
+fn set_patch_meta_leaves_blob_untouched() {
+    // Metadane NIE są bajtami patcha — brzmienie musi zostać bit-w-bit takie samo.
+    let (mut s, _p, _c) = studio_with_one();
+    let before = s.store().get(&"p1".to_string()).unwrap();
+    s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", 1),
+        meta: mg101_commands::MetaPatch {
+            author: Some("X".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let after = s.store().get(&"p1".to_string()).unwrap();
+    assert_eq!(before.blob, after.blob, "blob nie może się zmienić");
+    assert_eq!(before.exact_hash, after.exact_hash, "fingerprint bez zmian");
+}
+
+#[test]
+fn set_patch_meta_only_touches_provided_fields_and_empty_string_clears() {
+    let (mut s, _p, _c) = studio_with_one();
+    s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", 1),
+        meta: mg101_commands::MetaPatch {
+            author: Some("A".into()),
+            notes: Some("notatka".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let rev = s.store().get(&"p1".to_string()).unwrap().revision;
+    // Zmieniamy TYLKO autora — notatka ma przetrwać (None = nie ruszaj).
+    s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", rev as i64),
+        meta: mg101_commands::MetaPatch {
+            author: Some("B".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let m = s.store().get(&"p1".to_string()).unwrap().meta;
+    assert_eq!(m.author.as_deref(), Some("B"));
+    assert_eq!(m.notes.as_deref(), Some("notatka"), "notatka nie mogła zniknąć");
+
+    // Pusty string CZYŚCI pole (odróżnienie od „nie podano").
+    let rev = s.store().get(&"p1".to_string()).unwrap().revision;
+    s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", rev as i64),
+        meta: mg101_commands::MetaPatch {
+            author: Some("".into()),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    assert_eq!(s.store().get(&"p1".to_string()).unwrap().meta.author, None);
+}
+
+#[test]
+fn rating_is_clamped_to_max() {
+    let (mut s, _p, _c) = studio_with_one();
+    s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", 1),
+        meta: mg101_commands::MetaPatch {
+            rating: Some(99),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        s.store().get(&"p1".to_string()).unwrap().meta.rating,
+        mg101_library::MAX_RATING
+    );
+}
+
+#[test]
+fn collections_create_assign_and_list() {
+    let (mut s, _p, _c) = studio_with_one();
+    let v = s
+        .execute(&Command::CreateCollection {
+            name: "JL-British Pack".into(),
+        })
+        .unwrap();
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(id, "jl-british-pack", "ID powinno być czytelnym slugiem");
+
+    let rev = s.store().get(&"p1".to_string()).unwrap().revision;
+    s.execute(&Command::AddToCollection {
+        target: lib_target("p1", rev as i64),
+        collection: id.clone(),
+    })
+    .unwrap();
+
+    let list = s.execute(&Command::ListCollections).unwrap();
+    let c = &list["collections"][0];
+    assert_eq!(c["id"], id.as_str());
+    assert_eq!(c["count"], 1);
+
+    // Obie strony relacji spójne: patch wie o kolekcji.
+    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    assert_eq!(p["collections"][0], id.as_str());
+}
+
+#[test]
+fn deleting_collection_keeps_patches() {
+    let (mut s, _p, _c) = studio_with_one();
+    let id = s
+        .execute(&Command::CreateCollection { name: "Paczka".into() })
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let rev = s.store().get(&"p1".to_string()).unwrap().revision;
+    s.execute(&Command::AddToCollection {
+        target: lib_target("p1", rev as i64),
+        collection: id.clone(),
+    })
+    .unwrap();
+    s.execute(&Command::DeleteCollection { collection: id.clone() })
+        .unwrap();
+
+    // Patch przetrwał, tylko bez przynależności.
+    let p = s.store().get(&"p1".to_string()).expect("patch musi zostać");
+    assert!(p.groups.is_empty());
+    let list = s.execute(&Command::ListCollections).unwrap();
+    assert!(list["collections"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn duplicate_collection_names_get_unique_ids() {
+    let (mut s, _p, _c) = studio_with_one();
+    let a = s
+        .execute(&Command::CreateCollection { name: "Rock".into() })
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let b = s
+        .execute(&Command::CreateCollection { name: "Rock".into() })
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(a, b, "kolizja nazw nie może dać tego samego ID");
+}
+
+#[test]
+fn tags_add_and_remove() {
+    let (mut s, _p, _c) = studio_with_one();
+    s.execute(&Command::AddTag {
+        target: lib_target("p1", 1),
+        tag: "metal".into(),
+    })
+    .unwrap();
+    let rev = s.store().get(&"p1".to_string()).unwrap().revision;
+    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    assert_eq!(p["tags"][0], "metal");
+
+    s.execute(&Command::RemoveTag {
+        target: lib_target("p1", rev as i64),
+        tag: "metal".into(),
+    })
+    .unwrap();
+    assert!(s.store().get(&"p1".to_string()).unwrap().tags.is_empty());
+}
+
+#[test]
+fn stale_revision_is_rejected_for_meta() {
+    let (mut s, _p, _c) = studio_with_one();
+    let err = s.execute(&Command::SetPatchMeta {
+        target: lib_target("p1", 99),
+        meta: mg101_commands::MetaPatch {
+            author: Some("X".into()),
+            ..Default::default()
+        },
+    });
+    assert!(matches!(err, Err(ExecError::Conflict { .. })));
 }

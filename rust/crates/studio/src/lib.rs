@@ -215,6 +215,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             exact_hash,
             tags: Default::default(),
             groups: Default::default(),
+            meta: Default::default(),
             created_at: self.now_ms,
             updated_at: self.now_ms,
             revision: 1,
@@ -313,6 +314,24 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                 destination_path,
             } => self.export_patch(target, destination_path),
             Command::ListFiles { path } => self.list_files(path),
+            // Metadane i kolekcje.
+            Command::SetPatchMeta { target, meta } => self.set_patch_meta(target, meta),
+            Command::AddTag { target, tag } => self.change_tag(target, tag, true),
+            Command::RemoveTag { target, tag } => self.change_tag(target, tag, false),
+            Command::ListCollections => Ok(self.list_collections()),
+            Command::CreateCollection { name } => self.create_collection(name),
+            Command::DeleteCollection { collection } => self.delete_collection(collection),
+            Command::AddToCollection { target, collection } => {
+                self.change_collection(target, collection, true)
+            }
+            Command::RemoveFromCollection { target, collection } => {
+                self.change_collection(target, collection, false)
+            }
+            // Katalog publicznych źródeł jest danymi warstwy urządzenia (desktop) —
+            // Studio nie zna konkretnego modelu (ADR-0002).
+            Command::ListPatchSources => Err(ExecError::Unsupported(
+                "katalog źródeł dostarcza warstwa aplikacji".into(),
+            )),
             // Sterowanie DRUM na żywo obsługuje warstwa desktopu (MIDI CC/SysEx na
             // urządzenie) — nie modyfikuje patchy, więc Studio go nie realizuje.
             Command::DrumCatalog
@@ -332,31 +351,36 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         // ID, jak zwraca magazyn `ORDER BY id` — to dawało „losową" kolejność:
         // import-<hash>, device-…, -copy-…). `slot` to pozycja w tym porządku.
         // Zakładki User/Factory idą osobno po indeksie slotu urządzenia (1A..9D).
-        let mut items: Vec<(String, String, String, u64)> = self
+        let mut items: Vec<(String, LibraryPatch)> = self
             .store
             .all()
-            .iter()
+            .into_iter()
             .map(|p| {
-                let name = self.record(p).map(|r| r.name()).unwrap_or_default();
-                (name, p.id.clone(), format!("{:?}", p.origin), p.revision)
+                let name = self.record(&p).map(|r| r.name()).unwrap_or_default();
+                (name, p)
             })
             .collect();
         // Stabilnie: po nazwie (bez rozróżniania wielkości), remis rozstrzyga ID.
         items.sort_by(|a, b| {
             a.0.to_lowercase()
                 .cmp(&b.0.to_lowercase())
-                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.1.id.cmp(&b.1.id))
         });
         let out: Vec<Value> = items
             .into_iter()
             .enumerate()
-            .map(|(i, (name, id, origin, revision))| {
+            .map(|(i, (name, p))| {
                 json!({
-                    "patchID": id,
+                    "patchID": p.id,
                     "slot": i + 1,
                     "name": name,
-                    "origin": origin,
-                    "revision": revision,
+                    "origin": format!("{:?}", p.origin),
+                    "revision": p.revision,
+                    // Metadane w liście: pozwalają filtrować po kolekcji/ocenie i pokazać
+                    // autora bez dociągania każdego patcha osobno.
+                    "meta": meta_json(&p),
+                    "tags": p.tags.iter().collect::<Vec<_>>(),
+                    "collections": p.groups.iter().collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -437,6 +461,10 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             "ir": {"present": rec.ir_present(), "name": rec.ir_name()},
             "blocks": blocks,
             "named_fields": named_fields,
+            // Metadane opisowe — kto jest autorem i na jakich warunkach patch może być użyty.
+            "meta": meta_json(&item),
+            "tags": item.tags.iter().collect::<Vec<_>>(),
+            "collections": item.groups.iter().collect::<Vec<_>>(),
         }))
     }
 
@@ -682,6 +710,157 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
         entry.state = EntryState::Committed;
         self.journal_append(&entry)?;
         Ok(json!({"success": true, "revision": new_rev}))
+    }
+
+    /// Edycja metadanych patcha — **poza blobem**. Bajty patcha (i tym samym
+    /// fingerprinty) pozostają nietknięte, więc nie odświeżamy hashy ani nie
+    /// journalujemy do WAL: `revert_last` przywraca BAJTY, a tu żaden bajt brzmienia
+    /// się nie zmienia. Rewizja jest sprawdzana i podbijana jak przy każdej mutacji.
+    fn mutate_meta<F>(&mut self, target: &TargetRef, edit: F) -> Result<Value, ExecError>
+    where
+        F: FnOnce(&mut LibraryPatch),
+    {
+        let (patch_id, revision) = library_target(target)?;
+        let mut item = self.get_patch(&patch_id)?;
+        if item.revision != revision {
+            return Err(ExecError::Conflict {
+                current_revision: item.revision,
+            });
+        }
+        edit(&mut item);
+        item.updated_at = self.now_ms;
+        let new_rev = self.store.update(item, revision)?;
+        Ok(json!({"success": true, "revision": new_rev}))
+    }
+
+    fn set_patch_meta(
+        &mut self,
+        target: &TargetRef,
+        meta: &mg101_commands::MetaPatch,
+    ) -> Result<Value, ExecError> {
+        if meta.is_empty() {
+            return Err(ExecError::Unsupported("brak pól do zmiany".into()));
+        }
+        let meta = meta.clone();
+        self.mutate_meta(target, move |item| {
+            // Pusty string = wyczyść pole; brak pola (None) = nie ruszaj.
+            fn assign(dst: &mut Option<String>, src: Option<String>) {
+                if let Some(v) = src {
+                    *dst = if v.trim().is_empty() {
+                        None
+                    } else {
+                        Some(v.trim().to_string())
+                    };
+                }
+            }
+            assign(&mut item.meta.author, meta.author);
+            assign(&mut item.meta.source, meta.source);
+            assign(&mut item.meta.source_url, meta.source_url);
+            assign(&mut item.meta.license, meta.license);
+            assign(&mut item.meta.notes, meta.notes);
+            if let Some(r) = meta.rating {
+                item.meta.set_rating(r.clamp(0, i64::from(u8::MAX)) as u8);
+            }
+            if let Some(f) = meta.favorite {
+                item.meta.favorite = f;
+            }
+        })
+    }
+
+    fn change_tag(&mut self, target: &TargetRef, tag: &str, add: bool) -> Result<Value, ExecError> {
+        let tag = tag.trim().to_string();
+        if tag.is_empty() {
+            return Err(ExecError::Unsupported("pusty tag".into()));
+        }
+        self.mutate_meta(target, move |item| {
+            if add {
+                item.tags.insert(tag);
+            } else {
+                item.tags.remove(&tag);
+            }
+        })
+    }
+
+    fn list_collections(&self) -> Value {
+        let mut groups: Vec<Value> = self
+            .store
+            .groups()
+            .into_iter()
+            .map(|g| {
+                json!({
+                    "id": g.id,
+                    "name": g.name,
+                    "count": g.members.len(),
+                    "members": g.members,
+                })
+            })
+            .collect();
+        groups.sort_by(|a, b| {
+            a["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase()
+                .cmp(&b["name"].as_str().unwrap_or_default().to_lowercase())
+        });
+        json!({ "collections": groups })
+    }
+
+    fn create_collection(&mut self, name: &str) -> Result<Value, ExecError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ExecError::Unsupported("pusta nazwa kolekcji".into()));
+        }
+        // ID stabilne i czytelne (slug), unikalne przez licznik przy kolizji.
+        let base = slug(name);
+        let existing: std::collections::BTreeSet<String> =
+            self.store.groups().into_iter().map(|g| g.id).collect();
+        let mut id = base.clone();
+        let mut n = 2;
+        while existing.contains(&id) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        self.store.create_group(mg101_library::Group {
+            id: id.clone(),
+            name: name.to_string(),
+            members: Vec::new(),
+        })?;
+        Ok(json!({"success": true, "id": id, "name": name}))
+    }
+
+    fn delete_collection(&mut self, id: &str) -> Result<Value, ExecError> {
+        // Store czyści też przynależność w patchach — same patche zostają.
+        self.store.delete_group(&id.to_string())?;
+        Ok(json!({"success": true}))
+    }
+
+    fn change_collection(
+        &mut self,
+        target: &TargetRef,
+        collection: &str,
+        add: bool,
+    ) -> Result<Value, ExecError> {
+        let (patch_id, revision) = library_target(target)?;
+        let item = self.get_patch(&patch_id)?;
+        if item.revision != revision {
+            return Err(ExecError::Conflict {
+                current_revision: item.revision,
+            });
+        }
+        let gid = collection.to_string();
+        // Store utrzymuje OBIE strony relacji (members grupy + groups patcha) —
+        // dlatego nie edytujemy `item.groups` ręcznie, bo rozjechałaby się grupa.
+        if add {
+            self.store.add_to_group(&gid, &patch_id)?;
+        } else {
+            self.store.remove_from_group(&gid, &patch_id)?;
+        }
+        let rev = self
+            .store
+            .get(&patch_id)
+            .map(|p| p.revision)
+            .unwrap_or(revision);
+        Ok(json!({"success": true, "revision": rev}))
     }
 
     fn duplicate(&mut self, target: &TargetRef) -> Result<Value, ExecError> {
@@ -964,6 +1143,7 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                 codec_version: "1".into(),
                 tags: Default::default(),
                 groups: Default::default(),
+                meta: Default::default(),
                 created_at: self.now_ms,
                 updated_at: self.now_ms,
                 revision: 1,
@@ -1036,6 +1216,54 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
 }
 
 /// Wymusza cel biblioteczny (executor nie pisze plików — to warstwa wyżej).
+/// Metadane patcha jako JSON (jeden kształt dla `list_patches` i `get_patch`).
+fn meta_json(item: &LibraryPatch) -> Value {
+    json!({
+        "author": item.meta.author,
+        "source": item.meta.source,
+        "sourceURL": item.meta.source_url,
+        "license": item.meta.license,
+        "notes": item.meta.notes,
+        "rating": item.meta.rating,
+        "favorite": item.meta.favorite,
+    })
+}
+
+/// Zamienia nazwę na stabilny, czytelny identyfikator (ASCII, bez spacji).
+/// Pusty wynik (np. sama interpunkcja) zastępujemy `collection`, by ID nigdy nie było puste.
+fn slug(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let s = s.trim_matches('-').to_string();
+    // Zwiń wielokrotne myślniki.
+    let mut out = String::with_capacity(s.len());
+    let mut prev_dash = false;
+    for c in s.chars() {
+        if c == '-' {
+            if !prev_dash {
+                out.push(c);
+            }
+            prev_dash = true;
+        } else {
+            out.push(c);
+            prev_dash = false;
+        }
+    }
+    if out.is_empty() {
+        "collection".to_string()
+    } else {
+        out
+    }
+}
+
 fn library_target(target: &TargetRef) -> Result<(PatchId, u64), ExecError> {
     match target {
         TargetRef::Library {

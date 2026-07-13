@@ -51,6 +51,54 @@ pub enum PatchOrigin {
     Shared,
 }
 
+/// Maksymalna ocena patcha (gwiazdki). 0 = brak oceny.
+pub const MAX_RATING: u8 = 5;
+
+/// Metadane opisowe patcha: **czyje jest, skąd pochodzi i na jakich warunkach**.
+///
+/// Powód istnienia: publiczne patche MG-101 (ChopTones, paczki autorskie) nie mają
+/// licencji na redystrybucję. Nie wolno ich pakować do aplikacji, ale użytkownik
+/// może je zaimportować u siebie — i wtedy musi być jasne, kto jest autorem i co
+/// wolno z patchem zrobić. Te pola niosą tę informację razem z patchem.
+///
+/// Wszystkie pola opcjonalne — wpisy sprzed migracji wczytują się jako puste.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchMeta {
+    /// Autor patcha (osoba lub marka), np. „Jimmy Lin", „ChopTones".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Nazwa paczki/kolekcji źródłowej, np. „JL-British Pack".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Adres źródła (strona autora/paczki) — do odesłania użytkownika do oryginału.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// Warunki użycia, np. „darmowe, bez redystrybucji", „komercyjne (kupione)".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Swobodna notatka użytkownika.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Ocena 0..=[`MAX_RATING`]; 0 oznacza brak oceny.
+    #[serde(default)]
+    pub rating: u8,
+    /// Ulubiony (szybki filtr, niezależny od oceny).
+    #[serde(default)]
+    pub favorite: bool,
+}
+
+impl PatchMeta {
+    /// Ustawia ocenę, przycinając do dozwolonego zakresu (UI/agent nie mogą wstawić 9).
+    pub fn set_rating(&mut self, rating: u8) {
+        self.rating = rating.min(MAX_RATING);
+    }
+
+    /// Czy metadane są puste (nic nie przypisano) — do ukrywania pustych sekcji w UI.
+    pub fn is_empty(&self) -> bool {
+        *self == PatchMeta::default()
+    }
+}
+
 /// Wpis biblioteki (HLD §3). `blob` to oryginalne bajty (bajty święte);
 /// `content_hash` (fingerprint brzmieniowy, znormalizowany) i `exact_hash`
 /// (bit-identyczność całego blobu) służą dopasowaniu po połączeniu (§4).
@@ -75,6 +123,10 @@ pub struct LibraryPatch {
     pub exact_hash: Hash,
     pub tags: BTreeSet<TagId>,
     pub groups: BTreeSet<GroupId>,
+    /// Metadane opisowe (autor/źródło/licencja/notatki/ocena). `serde(default)` =
+    /// wpisy zapisane przed migracją wczytują się z pustymi metadanymi, bez konwersji.
+    #[serde(default)]
+    pub meta: PatchMeta,
     /// Znacznik utworzenia (ms epoch — dostarczany przez wywołującego, wasm-safe).
     pub created_at: i64,
     pub updated_at: i64,
@@ -194,6 +246,7 @@ mod tests {
             exact_hash: "e1".into(),
             tags: BTreeSet::new(),
             groups: BTreeSet::new(),
+            meta: Default::default(),
             created_at: 0,
             updated_at: 0,
             revision: 1,

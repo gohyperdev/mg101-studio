@@ -440,8 +440,9 @@ fn ensure_agent_key(vm: &Vm, state: &Rc<RefCell<KeyLoad>>) {
     ));
 }
 
-/// Obsługuje komendy DRUM (sterowanie na żywo) agenta, kierując je na urządzenie
-/// zamiast do Studio. Zwraca `None`, gdy to nie komenda DRUM (obsłuży ją Studio).
+/// Obsługuje komendy warstwy urządzenia (DRUM na żywo, katalog źródeł patchy),
+/// kierując je poza Studio — bo Studio jest device-agnostyczne i nie zna ani mapy CC
+/// MG-101, ani listy stron z patchami. Zwraca `None`, gdy komendę ma wykonać Studio.
 fn handle_drum_command(
     cmd: &mg101_commands::Command,
     presync: &Rc<RefCell<Option<mg101_desktop::device::PresetSync>>>,
@@ -449,6 +450,31 @@ fn handle_drum_command(
     use mg101_commands::Command;
     use mg101_desktop::drum;
     use serde_json::json;
+
+    // Katalog publicznych źródeł patchy — same odnośniki (autor/URL/licencja).
+    // Aplikacja NIE rozpowszechnia cudzych plików patchy: żadne z tych źródeł nie
+    // daje licencji na redystrybucję.
+    if let Command::ListPatchSources = cmd {
+        let items: Vec<serde_json::Value> = mg101_desktop::sources::all()
+            .into_iter()
+            .map(|s| {
+                json!({
+                    "id": s.id,
+                    "name": s.name,
+                    "author": s.author,
+                    "url": s.url,
+                    "license": s.license,
+                    "paid": s.paid,
+                    "description": s.description,
+                })
+            })
+            .collect();
+        return Some(Ok(json!({
+            "sources": items,
+            "note": "Same odnośniki — aplikacja nie zawiera cudzych plików patchy \
+                     (brak licencji na redystrybucję). Pobierz od autora i zaimportuj.",
+        })));
+    }
 
     // Katalog nie wymaga urządzenia — czysty odczyt danych.
     if let Command::DrumCatalog = cmd {

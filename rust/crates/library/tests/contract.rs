@@ -23,6 +23,7 @@ fn patch(id: &str) -> LibraryPatch {
         exact_hash: format!("e-{id}"),
         tags: BTreeSet::new(),
         groups: BTreeSet::new(),
+        meta: Default::default(),
         created_at: 0,
         updated_at: 0,
         revision: 1,

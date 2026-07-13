@@ -310,6 +310,95 @@ impl ToolDefinition {
                 Kind::Destructive,
             ));
 
+            // METADANE I KOLEKCJE (biblioteka)
+            t.push(ToolDefinition::new(
+                "set_patch_meta",
+                "Ustawia metadane patcha: autora, źródło, licencję, notatki, ocenę (0–5), ulubione. \
+                 Podaje się TYLKO pola do zmiany — pominięte zostają bez zmian, a pusty string czyści pole. \
+                 Używaj przy imporcie cudzych patchy, by zachować przypisanie autorstwa i warunki użycia.",
+                schema(
+                    with_target(json!({
+                        "author": str_prop("Autor patcha (osoba lub marka), np. \"Jimmy Lin\"."),
+                        "source": str_prop("Nazwa paczki/kolekcji źródłowej, np. \"JL-British Pack\"."),
+                        "sourceURL": str_prop("Adres strony źródła/autora."),
+                        "license": str_prop("Warunki użycia, np. \"darmowe, bez redystrybucji\"."),
+                        "notes": str_prop("Swobodna notatka."),
+                        "rating": int_prop("Ocena 0–5 (0 = brak oceny)."),
+                        "favorite": bool_prop("Czy oznaczyć jako ulubiony."),
+                    })),
+                    &req(&[]),
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "add_tag",
+                "Dodaje swobodny tag do patcha (np. \"metal\", \"clean\").",
+                schema(
+                    with_target(json!({"tag": str_prop("Etykieta tagu.")})),
+                    &req(&["tag"]),
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "remove_tag",
+                "Usuwa tag z patcha.",
+                schema(
+                    with_target(json!({"tag": str_prop("Etykieta tagu.")})),
+                    &req(&["tag"]),
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "list_collections",
+                "Wypisuje kolekcje (grupy) w bibliotece wraz z liczbą patchy i ich ID.",
+                schema(json!({}), &[]),
+                Kind::Read,
+            ));
+            t.push(ToolDefinition::new(
+                "create_collection",
+                "Tworzy nową kolekcję (grupę) o podanej nazwie i zwraca jej ID.",
+                schema(
+                    json!({"name": str_prop("Nazwa kolekcji, np. \"JL-British Pack\".")}),
+                    &["name"],
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "delete_collection",
+                "Usuwa kolekcję. Patche pozostają w bibliotece — znika tylko przynależność.",
+                schema(
+                    json!({"collection": str_prop("ID kolekcji.")}),
+                    &["collection"],
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "add_to_collection",
+                "Przypisuje patch do kolekcji (patch może należeć do wielu kolekcji).",
+                schema(
+                    with_target(json!({"collection": str_prop("ID kolekcji.")})),
+                    &req(&["collection"]),
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "remove_from_collection",
+                "Usuwa patch z kolekcji (sam patch zostaje w bibliotece).",
+                schema(
+                    with_target(json!({"collection": str_prop("ID kolekcji.")})),
+                    &req(&["collection"]),
+                ),
+                Kind::Write,
+            ));
+            t.push(ToolDefinition::new(
+                "list_patch_sources",
+                "Wypisuje katalog PUBLICZNYCH ŹRÓDEŁ patchy (autor, adres, licencja, czy płatne). \
+                 To wyłącznie odnośniki — aplikacja NIE zawiera cudzych plików patchy, bo żadne z tych \
+                 źródeł nie daje licencji na redystrybucję. Użytkownik pobiera je sam, a potem importuje.",
+                schema(json!({}), &[]),
+                Kind::Read,
+            ));
+
             // LIVE DEVICE — DRUM (sterowanie na żywo, wymaga połączenia z urządzeniem)
             t.push(ToolDefinition::new(
                 "drum_list_patterns",

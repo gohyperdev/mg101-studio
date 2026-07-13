@@ -35,6 +35,30 @@ pub enum Kind {
     Destructive,
 }
 
+/// Częściowa aktualizacja metadanych patcha.
+///
+/// Semantyka pól: `None` = **nie ruszaj** tego pola; `Some(x)` = ustaw na `x`.
+/// Pusty string czyści pole (użytkownik/agent może skasować błędnie wpisanego autora)
+/// — dlatego `Option<String>`, a nie sam `String`: inaczej nie dałoby się odróżnić
+/// „nie podano" od „wyczyść".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MetaPatch {
+    pub author: Option<String>,
+    pub source: Option<String>,
+    pub source_url: Option<String>,
+    pub license: Option<String>,
+    pub notes: Option<String>,
+    pub rating: Option<i64>,
+    pub favorite: Option<bool>,
+}
+
+impl MetaPatch {
+    /// Czy cokolwiek jest do zmiany (pusty patch = no-op).
+    pub fn is_empty(&self) -> bool {
+        *self == MetaPatch::default()
+    }
+}
+
 /// Komenda domenowa (port `DomainCommand`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -119,6 +143,38 @@ pub enum Command {
         target: TargetRef,
     },
     RevertSession,
+    // Metadane i kolekcje (biblioteka, device-agnostyczne).
+    /// Częściowa aktualizacja metadanych patcha (autor/źródło/licencja/notatki/ocena).
+    SetPatchMeta {
+        target: TargetRef,
+        meta: MetaPatch,
+    },
+    AddTag {
+        target: TargetRef,
+        tag: String,
+    },
+    RemoveTag {
+        target: TargetRef,
+        tag: String,
+    },
+    /// Lista kolekcji (grup) wraz z liczbą patchy.
+    ListCollections,
+    CreateCollection {
+        name: String,
+    },
+    DeleteCollection {
+        collection: String,
+    },
+    AddToCollection {
+        target: TargetRef,
+        collection: String,
+    },
+    RemoveFromCollection {
+        target: TargetRef,
+        collection: String,
+    },
+    /// Katalog publicznych źródeł patchy (linki + autor + licencja) — NIE pliki.
+    ListPatchSources,
     // Live device control (DRUM) — sterowanie na żywo urządzeniem (MIDI CC/SysEx).
     // Nie modyfikują patcha: wykonywane w warstwie desktopu na aktywnym połączeniu.
     /// Zwraca katalog wzorców DRUM (grupy i wzorce).
@@ -169,6 +225,15 @@ impl Command {
             Command::ListFiles { .. } => "list_files",
             Command::DeletePatch { .. } => "delete_patch",
             Command::RevertSession => "revert_session",
+            Command::SetPatchMeta { .. } => "set_patch_meta",
+            Command::AddTag { .. } => "add_tag",
+            Command::RemoveTag { .. } => "remove_tag",
+            Command::ListCollections => "list_collections",
+            Command::CreateCollection { .. } => "create_collection",
+            Command::DeleteCollection { .. } => "delete_collection",
+            Command::AddToCollection { .. } => "add_to_collection",
+            Command::RemoveFromCollection { .. } => "remove_from_collection",
+            Command::ListPatchSources => "list_patch_sources",
             Command::DrumCatalog => "drum_list_patterns",
             Command::DrumTransport { .. } => "drum_transport",
             Command::DrumVolume { .. } => "drum_set_volume",
@@ -188,6 +253,8 @@ impl Command {
             | Command::GetDiff { .. }
             | Command::GetRaw { .. }
             | Command::SelectPatch { .. }
+            | Command::ListCollections
+            | Command::ListPatchSources
             | Command::DrumCatalog => Kind::Read,
             Command::SetParameter { .. }
             | Command::SetModel { .. }
@@ -197,6 +264,13 @@ impl Command {
             | Command::SetNamedField { .. }
             | Command::ClearIr { .. }
             | Command::DuplicatePatch { .. }
+            | Command::SetPatchMeta { .. }
+            | Command::AddTag { .. }
+            | Command::RemoveTag { .. }
+            | Command::CreateCollection { .. }
+            | Command::DeleteCollection { .. }
+            | Command::AddToCollection { .. }
+            | Command::RemoveFromCollection { .. }
             | Command::DrumTransport { .. }
             | Command::DrumVolume { .. }
             | Command::DrumPattern { .. }
@@ -296,6 +370,33 @@ fn int_array_arg(args: &Args, key: &str) -> Result<Vec<i64>, ParseError> {
             name: key.into(),
             expected: "array".into(),
         }),
+    }
+}
+
+/// Argument opcjonalny: brak klucza → `None` („nie ruszaj pola"). Obecny klucz musi
+/// mieć poprawny typ — `null` też traktujemy jako brak (LLM lubi wstawiać `null`).
+fn opt_string(args: &Args, key: &str) -> Result<Option<String>, ParseError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(ParseError::InvalidArgumentType {
+            name: key.into(),
+            expected: "string".into(),
+        }),
+    }
+}
+
+fn opt_int(args: &Args, key: &str) -> Result<Option<i64>, ParseError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => int_arg(args, key).map(Some),
+    }
+}
+
+fn opt_bool(args: &Args, key: &str) -> Result<Option<bool>, ParseError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => bool_arg(args, key).map(Some),
     }
 }
 
@@ -401,6 +502,42 @@ impl Command {
                 target: target_ref(args)?,
             },
             "revert_session" => Command::RevertSession,
+            "set_patch_meta" => Command::SetPatchMeta {
+                target: target_ref(args)?,
+                meta: MetaPatch {
+                    author: opt_string(args, "author")?,
+                    source: opt_string(args, "source")?,
+                    source_url: opt_string(args, "sourceURL")?,
+                    license: opt_string(args, "license")?,
+                    notes: opt_string(args, "notes")?,
+                    rating: opt_int(args, "rating")?,
+                    favorite: opt_bool(args, "favorite")?,
+                },
+            },
+            "add_tag" => Command::AddTag {
+                target: target_ref(args)?,
+                tag: string_arg(args, "tag")?,
+            },
+            "remove_tag" => Command::RemoveTag {
+                target: target_ref(args)?,
+                tag: string_arg(args, "tag")?,
+            },
+            "list_collections" => Command::ListCollections,
+            "create_collection" => Command::CreateCollection {
+                name: string_arg(args, "name")?,
+            },
+            "delete_collection" => Command::DeleteCollection {
+                collection: string_arg(args, "collection")?,
+            },
+            "add_to_collection" => Command::AddToCollection {
+                target: target_ref(args)?,
+                collection: string_arg(args, "collection")?,
+            },
+            "remove_from_collection" => Command::RemoveFromCollection {
+                target: target_ref(args)?,
+                collection: string_arg(args, "collection")?,
+            },
+            "list_patch_sources" => Command::ListPatchSources,
             "drum_list_patterns" => Command::DrumCatalog,
             "drum_transport" => Command::DrumTransport {
                 playing: bool_arg(args, "playing")?,

@@ -857,6 +857,7 @@ mod tests {
             exact_hash: "e".into(),
             tags: BTreeSet::new(),
             groups: BTreeSet::new(),
+            meta: Default::default(),
             created_at: 0,
             updated_at: 0,
             revision: 1,

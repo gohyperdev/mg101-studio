@@ -16,6 +16,7 @@ mg101-agent-core = { path = "../agent-core" }
 mg101-device-link = { path = "../device-link" }
 mg101-device-pack-api = { path = "../device-pack-api" }
 mg101-pack-nux-mg101 = { path = "../pack-nux-mg101" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # UI Slint tylko na natywnych (macOS/Windows) — nie na wasm. Backend renderer

@@ -20,6 +20,7 @@ pub mod keychain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod device;
 pub mod drum;
+pub mod sources;
 
 pub use i18n::{tr, Lang};
 pub use vm::{

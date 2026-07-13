@@ -342,6 +342,7 @@ mod tests {
             exact_hash: format!("e-{id}"),
             tags: BTreeSet::new(),
             groups: BTreeSet::new(),
+            meta: Default::default(),
             created_at: 1,
             updated_at: 1,
             revision: 1,
