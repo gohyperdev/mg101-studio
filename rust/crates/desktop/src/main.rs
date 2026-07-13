@@ -265,6 +265,33 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
 }
 
 /// Odświeża dane na oknie z bieżącego stanu VM (nie dotyka `agent-busy`).
+/// Wypełnia zakładkę Meta danymi otwartego patcha (autorstwo, tagi, kolekcje).
+/// Kolekcje pobieramy tu, bo `member` zależy od BIEŻĄCEGO patcha.
+fn apply_meta(ui: &AppWindow, vm: &mut Vm, d: &mg101_desktop::PatchDetail) {
+    let m = &d.meta;
+    ui.set_meta_author(m.author.clone().into());
+    ui.set_meta_source(m.source.clone().into());
+    ui.set_meta_source_url(m.source_url.clone().into());
+    ui.set_meta_license(m.license.clone().into());
+    ui.set_meta_notes(m.notes.clone().into());
+    ui.set_meta_rating(m.rating as i32);
+    ui.set_meta_favorite(m.favorite);
+    let tags: Vec<SharedString> = m.tags.iter().map(|t| t.clone().into()).collect();
+    ui.set_meta_tags(ModelRc::new(VecModel::from(tags)));
+
+    let cols: Vec<CollectionUi> = vm
+        .collections()
+        .into_iter()
+        .map(|(id, name, count)| CollectionUi {
+            member: m.collections.contains(&id),
+            id: id.into(),
+            name: name.into(),
+            count: count as i32,
+        })
+        .collect();
+    ui.set_collections(ModelRc::new(VecModel::from(cols)));
+}
+
 fn refresh(ui: &AppWindow, vm: &mut Vm) {
     ui.set_active_tab(tab_index(vm.tab()));
 
@@ -305,6 +332,7 @@ fn refresh(ui: &AppWindow, vm: &mut Vm) {
             ui.set_current_id(id.clone().into());
             match vm.detail(&id) {
                 Some(d) => {
+                    apply_meta(ui, vm, &d);
                     let dui = detail_to_ui(vm, &d);
                     ui.set_detail(dui);
                 }
@@ -633,6 +661,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_drum_group_names(ModelRc::new(VecModel::from(names)));
         ui.set_drum_group_patterns(ModelRc::new(VecModel::from(patterns)));
         ui.set_drum_group_base(ModelRc::new(VecModel::from(bases)));
+    }
+    // Katalog publicznych źródeł patchy — wyłącznie odnośniki (autor/URL/licencja).
+    {
+        let items: Vec<SourceUi> = mg101_desktop::sources::all()
+            .into_iter()
+            .map(|s| SourceUi {
+                name: s.name.into(),
+                author: s.author.into(),
+                license: s.license.into(),
+                url: s.url.into(),
+                paid: s.paid,
+                description: s.description.into(),
+            })
+            .collect();
+        ui.set_patch_sources(ModelRc::new(VecModel::from(items)));
     }
     detect_device(&ui);
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
@@ -997,6 +1040,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             vm.set_lang(if idx == 1 { Lang::Pl } else { Lang::En });
             apply_labels(&ui, &vm);
             refresh(&ui, &mut vm);
+        });
+    }
+
+    // --- Metadane / tagi / kolekcje otwartego patcha ---
+    wire!(
+        on_save_meta,
+        |vm, author, source, url, license, notes, rating, favorite| {
+            if let Some(id) = vm.selected_id() {
+                let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+                vm.set_meta(
+                    &id,
+                    rev,
+                    &author,
+                    &source,
+                    &url,
+                    &license,
+                    &notes,
+                    rating as i64,
+                    favorite,
+                );
+            }
+        }
+    );
+    wire!(on_add_tag, |vm, tag| {
+        if let Some(id) = vm.selected_id() {
+            let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+            vm.change_tag(&id, rev, &tag, true);
+        }
+    });
+    wire!(on_remove_tag, |vm, tag| {
+        if let Some(id) = vm.selected_id() {
+            let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+            vm.change_tag(&id, rev, &tag, false);
+        }
+    });
+    wire!(on_toggle_collection, |vm, collection, add| {
+        if let Some(id) = vm.selected_id() {
+            let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+            vm.change_collection(&id, rev, &collection, add);
+        }
+    });
+    wire!(on_new_collection, |vm, name| {
+        // Nowa kolekcja od razu z otwartym patchem w środku — inaczej użytkownik
+        // musiałby ją tworzyć i zaraz zaznaczać, co jest zbędnym krokiem.
+        if let Some(cid) = vm.create_collection(&name) {
+            if let Some(id) = vm.selected_id() {
+                let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+                vm.change_collection(&id, rev, &cid, true);
+            }
+        }
+    });
+    // Otwiera link w domyślnej przeglądarce (katalog źródeł / adres autora).
+    {
+        ui.on_open_url(move |url| {
+            let url = url.to_string();
+            // Tylko https — nie uruchamiamy dowolnych schematów (file://, itp.).
+            if !url.starts_with("https://") {
+                eprintln!("Odrzucono link spoza https: {url}");
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("open").arg(&url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &url])
+                .spawn();
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
         });
     }
 

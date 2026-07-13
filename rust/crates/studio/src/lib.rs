@@ -1106,7 +1106,84 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    /// Import ścieżki: pojedynczy plik ALBO katalog.
+    ///
+    /// Katalog → wszystkie `.mg101patch` w środku trafiają do **kolekcji o nazwie
+    /// katalogu**, a każdemu patchowi ustawiane jest `meta.source` = nazwa katalogu.
+    /// Pojedynczy plik celowo NIE tworzy kolekcji: import z `~/Downloads` zrobiłby
+    /// śmieciową kolekcję „Downloads".
     fn import_patch(&mut self, path: &str) -> Result<Value, ExecError> {
+        let p = std::path::Path::new(path);
+        if p.is_dir() {
+            return self.import_dir(p);
+        }
+        self.import_file(path, None)
+    }
+
+    /// Importuje katalog paczki: pliki `.mg101patch` → kolekcja o nazwie katalogu.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_dir(&mut self, dir: &std::path::Path) -> Result<Value, ExecError> {
+        let pack = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .map_err(|e| ExecError::Unsupported(format!("odczyt katalogu '{}': {e}", dir.display())))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.is_file()
+                    && p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("mg101patch"))
+            })
+            .collect();
+        if files.is_empty() {
+            return Err(ExecError::Unsupported(format!(
+                "brak plików .mg101patch w '{}'",
+                dir.display()
+            )));
+        }
+        // Deterministyczna kolejność (kolejność systemu plików nie jest gwarantowana).
+        files.sort();
+
+        // Kolekcja o nazwie katalogu — istniejąca jest ponownie użyta (re-import
+        // tej samej paczki nie mnoży kolekcji).
+        let collection = match self
+            .store
+            .groups()
+            .into_iter()
+            .find(|g| g.name.eq_ignore_ascii_case(&pack))
+        {
+            Some(g) => g.id,
+            None => self.create_collection(&pack)?["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        };
+
+        let mut ids = Vec::new();
+        for f in files {
+            let res = self.import_file(&f.to_string_lossy(), Some(&pack))?;
+            if let Some(arr) = res["importedPatchIDs"].as_array() {
+                for id in arr {
+                    if let Some(pid) = id.as_str() {
+                        self.store.add_to_group(&collection, &pid.to_string())?;
+                        ids.push(Value::String(pid.to_string()));
+                    }
+                }
+            }
+        }
+        Ok(json!({
+            "success": true,
+            "importedPatchIDs": ids,
+            "collection": collection,
+            "collectionName": pack,
+        }))
+    }
+
+    /// Importuje jeden plik. `pack` (gdy z katalogu) ląduje w `meta.source`.
+    fn import_file(&mut self, path: &str, pack: Option<&str>) -> Result<Value, ExecError> {
         let data = std::fs::read(path)
             .map_err(|e| ExecError::Unsupported(format!("odczyt '{path}': {e}")))?;
         let rs = self.profile.record_size;
@@ -1143,7 +1220,12 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
                 codec_version: "1".into(),
                 tags: Default::default(),
                 groups: Default::default(),
-                meta: Default::default(),
+                // Ślad pochodzenia: z jakiej paczki patch przyszedł. Autora i licencję
+                // uzupełnia użytkownik/agent — nie zgadujemy ich z nazwy katalogu.
+                meta: mg101_library::PatchMeta {
+                    source: pack.map(|s| s.to_string()),
+                    ..Default::default()
+                },
                 created_at: self.now_ms,
                 updated_at: self.now_ms,
                 revision: 1,

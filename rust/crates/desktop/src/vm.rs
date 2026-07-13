@@ -104,6 +104,21 @@ pub struct BlockRow {
     pub parameters: Vec<ParamRow>,
 }
 
+/// Metadane patcha dla UI (autor/źródło/licencja/notatki/ocena + tagi, kolekcje).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MetaRow {
+    pub author: String,
+    pub source: String,
+    pub source_url: String,
+    pub license: String,
+    pub notes: String,
+    pub rating: i64,
+    pub favorite: bool,
+    pub tags: Vec<String>,
+    /// ID kolekcji, do których patch należy.
+    pub collections: Vec<String>,
+}
+
 /// Szczegóły wybranego patcha (edytor + nagłówek).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PatchDetail {
@@ -113,6 +128,7 @@ pub struct PatchDetail {
     pub revision: i64,
     pub ir_present: bool,
     pub blocks: Vec<BlockRow>,
+    pub meta: MetaRow,
 }
 
 /// Pojedyncza różnica bajtowa (inspektor Changes).
@@ -597,6 +613,117 @@ impl<S: LibraryStore> ViewModel<S> {
         .is_some()
     }
 
+    /// Zapisuje metadane patcha (autor/źródło/licencja/notatki/ocena/ulubione).
+    /// Puste stringi CZYSZCZĄ pola — UI zawsze wysyła komplet z formularza.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_meta(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        author: &str,
+        source: &str,
+        source_url: &str,
+        license: &str,
+        notes: &str,
+        rating: i64,
+        favorite: bool,
+    ) -> bool {
+        self.exec(&Command::SetPatchMeta {
+            target: Self::library_target(patch_id, expected_revision),
+            meta: mg101_commands::MetaPatch {
+                author: Some(author.to_owned()),
+                source: Some(source.to_owned()),
+                source_url: Some(source_url.to_owned()),
+                license: Some(license.to_owned()),
+                notes: Some(notes.to_owned()),
+                rating: Some(rating),
+                favorite: Some(favorite),
+            },
+        })
+        .is_some()
+    }
+
+    /// Dodaje/usuwa tag patcha.
+    pub fn change_tag(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        tag: &str,
+        add: bool,
+    ) -> bool {
+        let target = Self::library_target(patch_id, expected_revision);
+        let cmd = if add {
+            Command::AddTag {
+                target,
+                tag: tag.to_owned(),
+            }
+        } else {
+            Command::RemoveTag {
+                target,
+                tag: tag.to_owned(),
+            }
+        };
+        self.exec(&cmd).is_some()
+    }
+
+    /// Lista kolekcji jako (id, nazwa, liczba patchy).
+    pub fn collections(&mut self) -> Vec<(String, String, i64)> {
+        let Some(v) = self.exec(&Command::ListCollections) else {
+            return Vec::new();
+        };
+        v.get("collections")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .map(|c| {
+                        (
+                            c.get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            c.get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            c.get("count").and_then(Value::as_i64).unwrap_or(0),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tworzy kolekcję; zwraca jej ID.
+    pub fn create_collection(&mut self, name: &str) -> Option<String> {
+        let v = self.exec(&Command::CreateCollection {
+            name: name.to_owned(),
+        })?;
+        v.get("id").and_then(Value::as_str).map(str::to_owned)
+    }
+
+    /// Dodaje/usuwa patch z kolekcji.
+    pub fn change_collection(
+        &mut self,
+        patch_id: &str,
+        expected_revision: i64,
+        collection: &str,
+        add: bool,
+    ) -> bool {
+        let target = Self::library_target(patch_id, expected_revision);
+        let cmd = if add {
+            Command::AddToCollection {
+                target,
+                collection: collection.to_owned(),
+            }
+        } else {
+            Command::RemoveFromCollection {
+                target,
+                collection: collection.to_owned(),
+            }
+        };
+        self.exec(&cmd).is_some()
+    }
+
     /// Duplikuje patch; zwraca ID nowej kopii.
     pub fn duplicate(&mut self, patch_id: &str, expected_revision: i64) -> Option<String> {
         let v = self.exec(&Command::DuplicatePatch {
@@ -730,6 +857,43 @@ fn detail_from_json(v: &Value) -> PatchDetail {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         blocks,
+        meta: meta_from_json(v),
+    }
+}
+
+/// Metadane z JSON-a `get_patch` (brakujące pola → puste, nie panika).
+fn meta_from_json(v: &Value) -> MetaRow {
+    let s = |m: &Value, k: &str| -> String {
+        m.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let list = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let m = v.get("meta").cloned().unwrap_or(Value::Null);
+    MetaRow {
+        author: s(&m, "author"),
+        source: s(&m, "source"),
+        source_url: s(&m, "sourceURL"),
+        license: s(&m, "license"),
+        notes: s(&m, "notes"),
+        rating: m.get("rating").and_then(Value::as_i64).unwrap_or(0),
+        favorite: m
+            .get("favorite")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        tags: list("tags"),
+        collections: list("collections"),
     }
 }
 

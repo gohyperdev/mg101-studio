@@ -3207,6 +3207,7 @@ dependencies = [
  "mg101-transfer-engine",
  "midir",
  "rfd",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",

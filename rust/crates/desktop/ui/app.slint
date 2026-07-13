@@ -65,6 +65,25 @@ export struct SlotRowUi {
     writable: bool,
 }
 
+// Kolekcja (grupa) w bibliotece + czy należy do niej bieżący patch.
+export struct CollectionUi {
+    id: string,
+    name: string,
+    count: int,
+    member: bool,       // czy otwarty patch jest w tej kolekcji
+}
+
+// Publiczne ŹRÓDŁO patchy — sam odnośnik, nie plik. Aplikacja nie rozpowszechnia
+// cudzych patchy (brak licencji na redystrybucję) — odsyła do autora.
+export struct SourceUi {
+    name: string,
+    author: string,
+    license: string,
+    url: string,
+    paid: bool,
+    description: string,
+}
+
 export struct BinGroupUi {
     label: string,
     addr: string,       // offset w hex, gotowy (np. "0x0004")
@@ -117,6 +136,18 @@ export component AppWindow inherits Window {
     in property <[[string]]> drum-group-patterns;  // wzorce w każdej grupie
     in property <[int]> drum-group-base;           // baza CC82 pierwszego wzorca grupy
     property <int> drum-group-index: 0;            // wybrana grupa (stan UI)
+
+    // Metadane otwartego patcha: kto jest autorem, skąd pochodzi, co wolno.
+    in property <string> meta-author;
+    in property <string> meta-source;
+    in property <string> meta-source-url;
+    in property <string> meta-license;
+    in property <string> meta-notes;
+    in property <int> meta-rating;         // 0..5 (0 = brak oceny)
+    in property <bool> meta-favorite;
+    in property <[string]> meta-tags;
+    in property <[CollectionUi]> collections;
+    in property <[SourceUi]> patch-sources;
 
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
@@ -206,10 +237,17 @@ export component AppWindow inherits Window {
     callback send-control(int, int);                   // generyczny CC: wyślij CC<cc> = <value> (DRUM/LOOP)
     callback send-drum-tempo(int);                     // DRUM tempo: wyślij ramkę SysEx BPM
     callback ensure-agent-key();                       // leniwy odczyt klucza API z magazynu
+    // Metadane / kolekcje / źródła
+    callback save-meta(string, string, string, string, string, int, bool); // autor, źródło, url, licencja, notatki, ocena, ulubiony
+    callback add-tag(string);
+    callback remove-tag(string);
+    callback toggle-collection(string, bool);          // id kolekcji, czy dodać
+    callback new-collection(string);                   // nazwa nowej kolekcji
+    callback open-url(string);                         // otwórz link w przeglądarce
     // Indeksy zakładek prawego panelu, które korzystają z agenta (kolejność Tab niżej:
-    // Changes 0, Binary 1, Agent 2, MCP 3, MIDI 4, DRUM 5, Ustawienia 6).
+    // Changes 0, Binary 1, Agent 2, MCP 3, MIDI 4, DRUM 5, Meta 6, Źródła 7, Ustawienia 8).
     property <int> tab-agent: 2;
-    property <int> tab-settings: 6;
+    property <int> tab-settings: 8;
 
     VerticalBox {
         padding: 0px;
@@ -938,6 +976,166 @@ export component AppWindow inherits Window {
                                 enabled: root.device-connected;
                                 selected => {
                                     root.send-control(82, root.drum-group-base[root.drum-group-index] + self.current-index);
+                                }
+                            }
+                        }
+                    }
+                    // Metadane otwartego patcha: autorstwo, pochodzenie, warunki użycia.
+                    Tab {
+                        title: "Meta";
+                        ScrollView {
+                            VerticalBox {
+                                padding: 8px;
+                                spacing: 6px;
+                                alignment: start;
+                                if !root.has-selection: Text {
+                                    text: "Wybierz patch, by opisać jego autorstwo i pochodzenie.";
+                                    color: #8a8a96; font-size: 11px; wrap: word-wrap;
+                                }
+                                if root.has-selection: VerticalBox {
+                                    padding: 0px;
+                                    spacing: 6px;
+                                    alignment: start;
+                                    Text { text: "Autor"; color: #8a8a96; font-size: 11px; }
+                                    meta-author := LineEdit {
+                                        text: root.meta-author;
+                                        placeholder-text: "np. Jimmy Lin";
+                                    }
+                                    Text { text: "Źródło (paczka)"; color: #8a8a96; font-size: 11px; }
+                                    meta-source := LineEdit {
+                                        text: root.meta-source;
+                                        placeholder-text: "np. JL-British Pack";
+                                    }
+                                    Text { text: "Adres źródła"; color: #8a8a96; font-size: 11px; }
+                                    HorizontalBox {
+                                        padding: 0px; spacing: 4px;
+                                        meta-url := LineEdit {
+                                            text: root.meta-source-url;
+                                            placeholder-text: "https://…";
+                                        }
+                                        Button {
+                                            text: "Otwórz";
+                                            enabled: meta-url.text != "";
+                                            clicked => { root.open-url(meta-url.text); }
+                                        }
+                                    }
+                                    Text { text: "Licencja / warunki użycia"; color: #8a8a96; font-size: 11px; }
+                                    meta-license := LineEdit {
+                                        text: root.meta-license;
+                                        placeholder-text: "np. darmowe, bez redystrybucji";
+                                    }
+                                    Text { text: "Notatki"; color: #8a8a96; font-size: 11px; }
+                                    meta-notes := LineEdit {
+                                        text: root.meta-notes;
+                                    }
+                                    // Ocena 0–5 + ulubiony.
+                                    Text { text: "Ocena"; color: #8a8a96; font-size: 11px; }
+                                    HorizontalBox {
+                                        padding: 0px; spacing: 4px; alignment: start;
+                                        for star[i] in [1, 2, 3, 4, 5]: Button {
+                                            text: root.meta-rating >= star ? "★" : "☆";
+                                            clicked => {
+                                                root.save-meta(meta-author.text, meta-source.text, meta-url.text,
+                                                    meta-license.text, meta-notes.text, star, fav.checked);
+                                            }
+                                        }
+                                        Button {
+                                            text: "bez oceny";
+                                            clicked => {
+                                                root.save-meta(meta-author.text, meta-source.text, meta-url.text,
+                                                    meta-license.text, meta-notes.text, 0, fav.checked);
+                                            }
+                                        }
+                                    }
+                                    fav := CheckBox {
+                                        text: "Ulubiony";
+                                        checked: root.meta-favorite;
+                                        toggled => {
+                                            root.save-meta(meta-author.text, meta-source.text, meta-url.text,
+                                                meta-license.text, meta-notes.text, root.meta-rating, self.checked);
+                                        }
+                                    }
+                                    Button {
+                                        text: "Zapisz metadane";
+                                        clicked => {
+                                            root.save-meta(meta-author.text, meta-source.text, meta-url.text,
+                                                meta-license.text, meta-notes.text, root.meta-rating, fav.checked);
+                                        }
+                                    }
+                                    // Tagi
+                                    Text { text: "Tagi"; color: #8a8a96; font-size: 11px; }
+                                    HorizontalBox {
+                                        padding: 0px; spacing: 4px;
+                                        new-tag := LineEdit { placeholder-text: "np. metal"; }
+                                        Button {
+                                            text: "Dodaj";
+                                            enabled: new-tag.text != "";
+                                            clicked => { root.add-tag(new-tag.text); new-tag.text = ""; }
+                                        }
+                                    }
+                                    for tag in root.meta-tags: HorizontalBox {
+                                        padding: 0px; spacing: 4px; alignment: start;
+                                        Text { text: "🏷 " + tag; color: white; vertical-alignment: center; }
+                                        Button {
+                                            text: "✕";
+                                            clicked => { root.remove-tag(tag); }
+                                        }
+                                    }
+                                    // Kolekcje
+                                    Text { text: "Kolekcje"; color: #8a8a96; font-size: 11px; }
+                                    HorizontalBox {
+                                        padding: 0px; spacing: 4px;
+                                        new-coll := LineEdit { placeholder-text: "nowa kolekcja"; }
+                                        Button {
+                                            text: "Utwórz";
+                                            enabled: new-coll.text != "";
+                                            clicked => { root.new-collection(new-coll.text); new-coll.text = ""; }
+                                        }
+                                    }
+                                    for c in root.collections: CheckBox {
+                                        text: c.name + " (" + c.count + ")";
+                                        checked: c.member;
+                                        toggled => { root.toggle-collection(c.id, self.checked); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Katalog publicznych źródeł patchy — ODNOŚNIKI, nie pliki.
+                    Tab {
+                        title: "Źródła";
+                        ScrollView {
+                            VerticalBox {
+                                padding: 8px;
+                                spacing: 8px;
+                                alignment: start;
+                                Text {
+                                    text: "Gdzie zdobyć patche MG-101. Aplikacja nie zawiera cudzych plików — żadne z tych źródeł nie daje licencji na redystrybucję. Pobierz od autora, potem zaimportuj (import folderu tworzy kolekcję i zapisuje źródło).";
+                                    color: #8a8a96; font-size: 11px; wrap: word-wrap;
+                                }
+                                for s in root.patch-sources: VerticalBox {
+                                    padding: 6px;
+                                    spacing: 2px;
+                                    alignment: start;
+                                    HorizontalBox {
+                                        padding: 0px; spacing: 6px; alignment: start;
+                                        Text {
+                                            text: s.name;
+                                            color: white; font-size: 13px; font-weight: 700;
+                                            vertical-alignment: center;
+                                        }
+                                        if s.paid: Text {
+                                            text: "płatne";
+                                            color: #ffb86c; font-size: 10px; vertical-alignment: center;
+                                        }
+                                    }
+                                    Text { text: "Autor: " + s.author; color: #c8b6ff; font-size: 11px; wrap: word-wrap; }
+                                    Text { text: s.description; color: #8a8a96; font-size: 11px; wrap: word-wrap; }
+                                    Text { text: "Licencja: " + s.license; color: #6a6a76; font-size: 10px; wrap: word-wrap; }
+                                    Button {
+                                        text: "Otwórz stronę autora";
+                                        clicked => { root.open-url(s.url); }
+                                    }
                                 }
                             }
                         }

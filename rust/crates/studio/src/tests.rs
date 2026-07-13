@@ -725,3 +725,58 @@ fn stale_revision_is_rejected_for_meta() {
     });
     assert!(matches!(err, Err(ExecError::Conflict { .. })));
 }
+
+#[test]
+fn importing_a_directory_creates_collection_named_after_it() {
+    let (mut s, _p, _c) = studio_with_one();
+    // Paczka na dysku: katalog z dwoma RÓŻNYMI rekordami (ID jest adresowane treścią,
+    // więc dwa identyczne zwinęłyby się do jednego).
+    let dir = std::env::temp_dir().join("mg101-test-pack-import");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let rs = _p.record_size;
+    for (i, fname) in ["a.mg101patch", "b.mg101patch"].iter().enumerate() {
+        let mut rec = vec![0u8; rs];
+        rec[0x10] = i as u8 + 1; // różnicujemy bajty
+        std::fs::write(dir.join(fname), &rec).unwrap();
+    }
+
+    let v = s
+        .execute(&Command::ImportPatch {
+            path: dir.to_string_lossy().to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(v["collectionName"], "mg101-test-pack-import");
+    let ids = v["importedPatchIDs"].as_array().unwrap();
+    assert_eq!(ids.len(), 2, "oba pliki zaimportowane");
+
+    // Kolekcja istnieje i ma oba patche.
+    let list = s.execute(&Command::ListCollections).unwrap();
+    let c = &list["collections"][0];
+    assert_eq!(c["count"], 2);
+
+    // Każdy patch zna swoją paczkę źródłową.
+    let pid = ids[0].as_str().unwrap().to_string();
+    let p = s.execute(&Command::GetPatch { patch_id: pid }).unwrap();
+    assert_eq!(p["meta"]["source"], "mg101-test-pack-import");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn importing_single_file_creates_no_collection() {
+    // Import pliku z ~/Downloads nie może robić kolekcji „Downloads".
+    let (mut s, _p, _c) = studio_with_one();
+    let f = std::env::temp_dir().join("mg101-single.mg101patch");
+    std::fs::write(&f, vec![7u8; _p.record_size]).unwrap();
+
+    s.execute(&Command::ImportPatch {
+        path: f.to_string_lossy().to_string(),
+    })
+    .unwrap();
+
+    let list = s.execute(&Command::ListCollections).unwrap();
+    assert!(list["collections"].as_array().unwrap().is_empty());
+    let _ = std::fs::remove_file(&f);
+}
