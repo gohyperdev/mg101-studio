@@ -202,6 +202,7 @@ export component AppWindow inherits Window {
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
     in property <bool> agent-busy;
+    in property <string> agent-status;   // np. „Agent pracuje… 12 s · narzędzie: list_patches"
     in property <string> usage-text;
 
     // Ustawienia AI
@@ -915,6 +916,9 @@ export component AppWindow inherits Window {
                                     width: chat-scroll.visible-width;
                                     padding: 4px;
                                     spacing: 6px;
+                                    // Bez tego layout rozciąga dymki na całą wysokość
+                                    // (jeden dymek wypełniał cały panel).
+                                    alignment: start;
                                     for m[i] in root.chat-rows: Rectangle {
                                         background: m.role == "user" ? #2a3550
                                             : (m.role == "tool" ? #2a2a30 : #2f3a2f);
@@ -936,6 +940,25 @@ export component AppWindow inherits Window {
                                                 wrap: word-wrap;
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            // Postęp przebiegu: agent potrafi pracować kilkadziesiąt
+                            // sekund (wiele wywołań narzędzi). Bez tego UI wyglądał
+                            // na zawieszony — zablokowany Send był jedynym sygnałem.
+                            if root.agent-busy: Rectangle {
+                                height: 26px;
+                                border-radius: 5px;
+                                background: #2f3a2f;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    Text {
+                                        text: root.agent-status;
+                                        color: #9bd99b;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                        overflow: elide;
                                     }
                                 }
                             }

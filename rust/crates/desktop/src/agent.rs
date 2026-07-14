@@ -81,16 +81,30 @@ impl ChatRunner {
         let (event_tx, event_rx) = channel(); // agent → UI (koniec/błąd)
 
         let join = std::thread::spawn(move || {
+            let dbg = std::env::var_os("MG101_AGENT_DEBUG").is_some();
+            if dbg {
+                eprintln!("[agent] wątek: start, historia {} wiad.", history.len());
+            }
             let client = HttpLlmClient::new(config, system, Variant::Library);
             let mut executor = ChannelExecutor { cmd_tx, res_rx };
             let mut auth = AutoAuthorizer;
             let mut roots: Vec<String> = Vec::new();
             let event = match run(&client, &mut executor, &mut auth, history, &mut roots) {
-                Ok(outcome) => AgentEvent::Done {
-                    history: outcome.history,
-                    usage: outcome.usage,
-                },
-                Err(e) => AgentEvent::Error(e.to_string()),
+                Ok(outcome) => {
+                    if dbg {
+                        eprintln!("[agent] wątek: koniec OK ({} iteracji)", outcome.iterations);
+                    }
+                    AgentEvent::Done {
+                        history: outcome.history,
+                        usage: outcome.usage,
+                    }
+                }
+                Err(e) => {
+                    if dbg {
+                        eprintln!("[agent] wątek: BŁĄD {e}");
+                    }
+                    AgentEvent::Error(e.to_string())
+                }
             };
             let _ = event_tx.send(event);
         });

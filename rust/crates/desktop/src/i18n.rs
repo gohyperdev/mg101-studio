@@ -238,6 +238,8 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("chat.role_tool", "narzędzie", "tool"),
         ("chat.role_assistant", "asystent", "assistant"),
         ("inspector.fields", "pól", "fields"),
+        ("agent.working", "Agent pracuje…", "Agent working…"),
+        ("agent.tool", "narzędzie:", "tool:"),
     ];
     for (k, pl, en) in TABLE {
         if *k == key {
@@ -293,6 +295,7 @@ mod tests {
             "meta.ph_tag", "meta.ph_collection",
             "inspector.sources", "sources.intro", "sources.paid", "sources.author",
             "sources.license", "sources.open",
+            "agent.working", "agent.tool",
         ];
         for key in KEYS {
             let pl = tr(Lang::Pl, key);

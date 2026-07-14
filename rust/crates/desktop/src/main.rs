@@ -269,6 +269,7 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_fields(l("inspector.fields"));
     ui.set_t_role_tool(l("chat.role_tool"));
     ui.set_t_role_assistant(l("chat.role_assistant"));
+    // agent.working / agent.tool składane w agent_status_text (nie jako gotowa etykieta).
     ui.set_t_clear(l("action.clear"));
     ui.set_t_save_file(l("action.save_file"));
     ui.set_t_open(l("action.open"));
@@ -512,6 +513,23 @@ fn detect_device(ui: &AppWindow, lang: Lang) {
     }
 }
 
+/// Tekst postępu przebiegu agenta: „Agent pracuje… 12 s · narzędzie: list_patches".
+/// Przebieg potrafi trwać ~minutę (wiele wywołań narzędzi + duży zestaw definicji),
+/// więc bez tego licznika UI wygląda na zawieszony.
+fn agent_status_text(lang: Lang, progress: &Option<(std::time::Instant, String)>) -> String {
+    let Some((started, tool)) = progress else {
+        return String::new();
+    };
+    let secs = started.elapsed().as_secs();
+    let working = mg101_desktop::i18n::tr(lang, "agent.working");
+    if tool.is_empty() {
+        format!("{working} {secs} s")
+    } else {
+        let label = mg101_desktop::i18n::tr(lang, "agent.tool");
+        format!("{working} {secs} s · {label} {tool}")
+    }
+}
+
 /// Stan leniwego odczytu klucza API z systemowego magazynu sekretów.
 /// Odczyt zdarza się **raz**, przy pierwszym użyciu agenta — nie na starcie aplikacji.
 enum KeyLoad {
@@ -674,6 +692,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Studio::new(store, profile, catalog, 0).with_journal(Box::new(SessionJournal::default()));
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
     let runner: Rc<RefCell<Option<ChatRunner>>> = Rc::new(RefCell::new(None));
+    // Postęp przebiegu agenta: kiedy ruszył i jakie narzędzie właśnie woła.
+    // Bez tego UI milczał kilkadziesiąt sekund i wyglądał na zawieszony.
+    let agent_progress: Rc<RefCell<Option<(std::time::Instant, String)>>> =
+        Rc::new(RefCell::new(None));
 
     // Klucz API z systemowego magazynu (parytet v1 KeychainStore) — ODCZYT LENIWY.
     // NIE czytamy go na starcie: na macOS pierwszy dostęp do Keychain potrafi
@@ -1187,6 +1209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let slot = runner.clone();
         let ks = key_load.clone();
         let pending = pending_run.clone();
+        let progress = agent_progress.clone();
         ui.on_send_message(move |text| {
             let Some(ui) = uw.upgrade() else { return };
             let mut vm = vmc.borrow_mut();
@@ -1202,7 +1225,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     SYSTEM_PROMPT.to_string(),
                     history,
                 ));
+                *progress.borrow_mut() = Some((std::time::Instant::now(), String::new()));
                 ui.set_agent_busy(true);
+                ui.set_agent_status(agent_status_text(vm.lang(), &progress.borrow()).into());
                 refresh(&ui, &mut vm);
                 return;
             }
@@ -1222,12 +1247,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Pompa wątku agenta: obsługuje żądania narzędzi (na wątku UI, na Studio) i
     // zdarzenia końcowe. Timer musi żyć do końca `run()`.
+    // Samotest ścieżki agenta w PRAWDZIWEJ aplikacji (bez klikania): wymusza odczyt
+    // klucza i wysyła wiadomość, żeby dało się zdiagnozować pompę z terminala.
+    let selftest = Timer::default();
+    if let Some(msg) = std::env::var_os("MG101_AGENT_SELFTEST") {
+        let uw = ui.as_weak();
+        selftest.start(TimerMode::SingleShot, Duration::from_millis(600), move || {
+            if let Some(ui) = uw.upgrade() {
+                eprintln!("[selftest] wymuszam odczyt klucza i wysyłam wiadomość");
+                ui.invoke_ensure_agent_key();
+                ui.invoke_send_message(msg.to_string_lossy().to_string().into());
+            }
+        });
+    }
+
     let pump = Timer::default();
     {
         let uw = ui.as_weak();
         let vmc = vm.clone();
         let slot = runner.clone();
         let psync = presync.clone();
+        let progress = agent_progress.clone();
         pump.start(TimerMode::Repeated, Duration::from_millis(40), move || {
             let Some(ui) = uw.upgrade() else { return };
             if slot.borrow().is_none() {
@@ -1242,6 +1282,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Wykonaj oczekujące narzędzia na Studio (wątek UI).
                     while let Some(cmd) = r.try_tool_request() {
                         // Komendy DRUM (sterowanie na żywo) idą do urządzenia, nie do Studio.
+                        // Pokaż, które narzędzie właśnie leci — inaczej długi przebieg
+                        // wygląda jak zawieszenie.
+                        if let Some((_, tool)) = progress.borrow_mut().as_mut() {
+                            *tool = cmd.tool_name().to_string();
+                        }
                         let res = match handle_drum_command(&cmd, &psync, vm.lang()) {
                             Some(r) => r,
                             None => vm.execute_tool(&cmd),
@@ -1266,7 +1311,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if done {
                 *slot.borrow_mut() = None;
+                *progress.borrow_mut() = None;
                 ui.set_agent_busy(false);
+                ui.set_agent_status(SharedString::new());
+            } else {
+                // Tyka co 40 ms → licznik sekund żyje nawet, gdy agent czeka na model.
+                let lang = vmc.borrow().lang();
+                ui.set_agent_status(agent_status_text(lang, &progress.borrow()).into());
             }
             // Odśwież tylko po realnej pracy — nie przebudowuj UI 25×/s bez potrzeby.
             if did_work || done {
@@ -1287,6 +1338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let krx = key_load.clone();
         let pending = pending_run.clone();
         let arunner = runner.clone();
+        let aprogress = agent_progress.clone();
         let ldump = last_dump.clone();
         let srecs = slot_records.clone();
         let psync = presync.clone();
@@ -1337,6 +1389,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 SYSTEM_PROMPT.to_string(),
                                 history,
                             ));
+                            *aprogress.borrow_mut() =
+                                Some((std::time::Instant::now(), String::new()));
                         } else {
                             vm.report_error(
                                 "agent nieskonfigurowany (uzupełnij ustawienia AI)".into(),
