@@ -72,7 +72,11 @@ pub fn tool_list() -> Vec<McpTool> {
 pub fn tool_list_for(variant: Variant) -> Vec<McpTool> {
     let mut tools: Vec<McpTool> = ToolDefinition::all(variant)
         .into_iter()
-        .filter(|d| is_mcp_tool(&d.name))
+        // Filtr `is_mcp_tool` dotyczy WYŁĄCZNIE trybu plikowego. W trybie mostka
+        // żądania idą do żywego `Studio` (`Command::parse` → `execute`), więc
+        // działa cały rejestr wariantu bibliotecznego — łącznie z odczytami
+        // (`list_patches`, `get_patch`, `get_selection`, `get_diff`).
+        .filter(|d| variant != Variant::File || is_mcp_tool(&d.name))
         .map(|d| McpTool {
             name: d.name,
             description: d.description,
@@ -271,5 +275,58 @@ mod tests {
             dispatch(&p, &c, INSPECT_PATCH, &Map::new()),
             Err(McpError::BadArgument(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod tool_list_tests {
+    use super::*;
+
+    /// Regresja: w trybie mostka `list_patches` DAŁO SIĘ wywołać, ale nie było go
+    /// na liście — model tracił iteracje na szukanie narzędzi, które „nie istnieją”.
+    #[test]
+    fn bridge_mode_advertises_library_read_tools() {
+        let names: Vec<String> = tool_list_for(Variant::Library)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        for expected in ["list_patches", "get_patch", "get_selection", "set_bpm"] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "brak {expected} na liście trybu bibliotecznego: {names:?}"
+            );
+        }
+        assert!(
+            !names.iter().any(|n| n == INSPECT_PATCH),
+            "inspect_patch jest plikowy — nie ma go w trybie bibliotecznym"
+        );
+    }
+
+    /// Tryb plikowy nie ma składu z rewizjami, więc narzędzia biblioteczne
+    /// muszą tam pozostać ukryte (obiecywałyby operację, której nie wykonamy).
+    #[test]
+    fn file_mode_hides_library_tools_but_offers_inspect() {
+        let names: Vec<String> = tool_list_for(Variant::File)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(!names.iter().any(|n| n == "list_patches"), "{names:?}");
+        assert!(names.iter().any(|n| n == INSPECT_PATCH), "{names:?}");
+        assert!(names.iter().any(|n| n == "set_bpm"), "{names:?}");
+    }
+
+    /// Każde ogłoszone narzędzie trybu mostka musi dać się sparsować na komendę —
+    /// inaczej agent dostanie „nieznane narzędzie” dopiero po wywołaniu.
+    #[test]
+    fn every_advertised_bridge_tool_is_a_real_command() {
+        for t in tool_list_for(Variant::Library) {
+            let args = serde_json::Map::new();
+            let parsed = mg101_commands::Command::parse(&t.name, &args);
+            assert!(
+                !matches!(parsed, Err(mg101_commands::ParseError::UnknownTool(_))),
+                "narzędzie {} nie istnieje w rejestrze komend",
+                t.name
+            );
+        }
     }
 }

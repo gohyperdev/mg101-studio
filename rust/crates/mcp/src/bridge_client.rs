@@ -53,7 +53,9 @@ impl BridgeClient {
         stream
             .write_all(line.as_bytes())
             .map_err(|e| format!("zapis do mostka: {e}"))?;
-        stream.flush().map_err(|e| format!("flush: {e}"))?;
+        stream
+            .flush()
+            .map_err(|e| format!("wysyłka do mostka: {e}"))?;
 
         // Czytamy DOKŁADNIE jedną linię odpowiedzi. BufReader tworzony na sklonowanym
         // uchwycie, żeby nie zjeść bajtów należących do kolejnego żądania.
@@ -162,6 +164,13 @@ mod tests {
         });
         let c = client_for(port);
         let e = c.call("list_patches", &serde_json::Map::new()).unwrap_err();
-        assert!(e.contains("mostek"), "czytelny komunikat, dostaliśmy: {e}");
+        // Zerwane gniazdo daje — zależnie od wyścigu z zamknięciem po drugiej
+        // stronie — EOF („mostek zamknął połączenie”) albo ECONNRESET przy
+        // zapisie/wysyłce/odczycie („… do mostka”). Każda ścieżka ma dać czytelny
+        // błąd, nie panikę, więc sprawdzamy wspólny rdzeń słowa.
+        assert!(
+            e.contains("most"),
+            "czytelny komunikat o mostku, dostaliśmy: {e}"
+        );
     }
 }
