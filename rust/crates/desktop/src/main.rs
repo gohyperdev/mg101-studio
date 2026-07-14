@@ -261,7 +261,78 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_key(l("settings.key"));
     ui.set_t_save(l("action.save"));
     ui.set_t_send(l("agent.send"));
+    // Sekcje urządzenia / MIDI / DRUM / Meta / Źródła.
+    ui.set_t_qt_warning(l("device.qt_warning"));
+    ui.set_t_connect_hint(l("device.connect_hint"));
+    ui.set_t_connect_control(l("device.connect_to_control"));
+    ui.set_t_slot_hint(l("slot.hint"));
+    ui.set_t_fields(l("inspector.fields"));
+    ui.set_t_role_tool(l("chat.role_tool"));
+    ui.set_t_role_assistant(l("chat.role_assistant"));
+    ui.set_t_clear(l("action.clear"));
+    ui.set_t_save_file(l("action.save_file"));
+    ui.set_t_open(l("action.open"));
+    ui.set_t_add(l("action.add"));
+    ui.set_t_create(l("action.create"));
+    ui.set_t_set(l("action.set"));
+    ui.set_t_midi_listen(l("midi.listen"));
+    ui.set_t_midi_active(l("midi.active"));
+    ui.set_t_midi_idle(l("midi.idle"));
+    ui.set_t_midi_no_device(l("midi.no_device"));
+    ui.set_t_midi_empty(l("midi.empty"));
+    ui.set_t_drum_hint(l("drum.hint"));
+    ui.set_t_drum_tempo(l("drum.tempo"));
+    ui.set_t_drum_volume(l("drum.volume"));
+    ui.set_t_drum_group(l("drum.group"));
+    ui.set_t_drum_pattern(l("drum.pattern"));
+    ui.set_t_meta(l("inspector.meta"));
+    ui.set_t_meta_no_selection(l("meta.no_selection"));
+    ui.set_t_meta_author(l("meta.author"));
+    ui.set_t_meta_source(l("meta.source"));
+    ui.set_t_meta_source_url(l("meta.source_url"));
+    ui.set_t_meta_license(l("meta.license"));
+    ui.set_t_meta_notes(l("meta.notes"));
+    ui.set_t_meta_rating(l("meta.rating"));
+    ui.set_t_meta_no_rating(l("meta.no_rating"));
+    ui.set_t_meta_favorite(l("meta.favorite"));
+    ui.set_t_meta_save(l("meta.save"));
+    ui.set_t_meta_tags(l("meta.tags"));
+    ui.set_t_meta_collections(l("meta.collections"));
+    ui.set_t_ph_author(l("meta.ph_author"));
+    ui.set_t_ph_source(l("meta.ph_source"));
+    ui.set_t_ph_license(l("meta.ph_license"));
+    ui.set_t_ph_tag(l("meta.ph_tag"));
+    ui.set_t_ph_collection(l("meta.ph_collection"));
+    ui.set_t_sources(l("inspector.sources"));
+    ui.set_t_sources_intro(l("sources.intro"));
+    ui.set_t_sources_paid(l("sources.paid"));
+    ui.set_t_sources_author(l("sources.author"));
+    ui.set_t_sources_license(l("sources.license"));
+    ui.set_t_sources_open(l("sources.open"));
+    // Katalog źródeł to DANE, ale widoczne w UI — opis i licencja też są tłumaczone,
+    // więc lista musi być przebudowana przy każdej zmianie języka.
+    apply_sources(ui, vm.lang());
+    // Etykieta urządzenia zawiera tłumaczone „brak urządzenia" — odśwież przy zmianie języka.
+    if !ui.get_device_connected() {
+        ui.set_device_label(l("device.none"));
+    }
     ui.set_lang_index(if vm.lang() == Lang::Pl { 1 } else { 0 });
+}
+
+/// Wypełnia zakładkę Źródła katalogiem w bieżącym języku.
+fn apply_sources(ui: &AppWindow, lang: Lang) {
+    let items: Vec<SourceUi> = mg101_desktop::sources::all(lang)
+        .into_iter()
+        .map(|s| SourceUi {
+            name: s.name.into(),
+            author: s.author.into(),
+            license: s.license.into(),
+            url: s.url.into(),
+            paid: s.paid,
+            description: s.description.into(),
+        })
+        .collect();
+    ui.set_patch_sources(ModelRc::new(VecModel::from(items)));
 }
 
 /// Odświeża dane na oknie z bieżącego stanu VM (nie dotyka `agent-busy`).
@@ -427,14 +498,15 @@ fn refresh(ui: &AppWindow, vm: &mut Vm) {
 
 /// Wykrywa podłączone urządzenie (po nazwach portów MIDI) i ustawia status w UI.
 /// Nie dotyka danych banków — te wypełnia dopiero zrzut.
-fn detect_device(ui: &AppWindow) {
+fn detect_device(ui: &AppWindow, lang: Lang) {
     match mg101_desktop::device::detect() {
         Some(d) => {
+            // Producent i model to nazwy własne — nie tłumaczymy.
             ui.set_device_label(format!("{} {}", d.manufacturer, d.model).into());
             ui.set_device_connected(true);
         }
         None => {
-            ui.set_device_label("brak urządzenia".into());
+            ui.set_device_label(mg101_desktop::i18n::tr(lang, "device.none").into());
             ui.set_device_connected(false);
         }
     }
@@ -474,6 +546,7 @@ fn ensure_agent_key(vm: &Vm, state: &Rc<RefCell<KeyLoad>>) {
 fn handle_drum_command(
     cmd: &mg101_commands::Command,
     presync: &Rc<RefCell<Option<mg101_desktop::device::PresetSync>>>,
+    lang: Lang,
 ) -> Option<Result<serde_json::Value, String>> {
     use mg101_commands::Command;
     use mg101_desktop::drum;
@@ -483,7 +556,7 @@ fn handle_drum_command(
     // Aplikacja NIE rozpowszechnia cudzych plików patchy: żadne z tych źródeł nie
     // daje licencji na redystrybucję.
     if let Command::ListPatchSources = cmd {
-        let items: Vec<serde_json::Value> = mg101_desktop::sources::all()
+        let items: Vec<serde_json::Value> = mg101_desktop::sources::all(lang)
             .into_iter()
             .map(|s| {
                 json!({
@@ -662,22 +735,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_drum_group_patterns(ModelRc::new(VecModel::from(patterns)));
         ui.set_drum_group_base(ModelRc::new(VecModel::from(bases)));
     }
-    // Katalog publicznych źródeł patchy — wyłącznie odnośniki (autor/URL/licencja).
-    {
-        let items: Vec<SourceUi> = mg101_desktop::sources::all()
-            .into_iter()
-            .map(|s| SourceUi {
-                name: s.name.into(),
-                author: s.author.into(),
-                license: s.license.into(),
-                url: s.url.into(),
-                paid: s.paid,
-                description: s.description.into(),
-            })
-            .collect();
-        ui.set_patch_sources(ModelRc::new(VecModel::from(items)));
-    }
-    detect_device(&ui);
+    detect_device(&ui, vm.borrow().lang());
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
     let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
     // Ostatni zrzut zdekodowany do rekordów plikowych (8402 B × zajęte sloty),
@@ -1184,7 +1242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Wykonaj oczekujące narzędzia na Studio (wątek UI).
                     while let Some(cmd) = r.try_tool_request() {
                         // Komendy DRUM (sterowanie na żywo) idą do urządzenia, nie do Studio.
-                        let res = match handle_drum_command(&cmd, &psync) {
+                        let res = match handle_drum_command(&cmd, &psync, vm.lang()) {
                             Some(r) => r,
                             None => vm.execute_tool(&cmd),
                         };
@@ -1295,7 +1353,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut t = tick.borrow_mut();
                 *t = t.wrapping_add(1);
                 if t.is_multiple_of(20) && dslot.borrow().is_none() {
-                    detect_device(&ui);
+                    detect_device(&ui, vmc.borrow().lang());
                     // Ostrzeżenie o równoległym QuickTone (konkurencja o port + zmiany
                     // w QT nie emitują Program Change → nasz sync ich nie widzi).
                     ui.set_qt_running(mg101_desktop::device::quicktone_running());

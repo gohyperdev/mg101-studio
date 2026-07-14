@@ -149,6 +149,56 @@ export component AppWindow inherits Window {
     in property <[CollectionUi]> collections;
     in property <[SourceUi]> patch-sources;
 
+    // Etykiety nowych sekcji (i18n z Rust) — nic tu nie może być wpisane na sztywno,
+    // bo wtedy przy EN zostawałby polski tekst (regresja zgłoszona przez użytkownika).
+    in property <string> t-qt-warning;
+    in property <string> t-connect-hint;
+    in property <string> t-connect-control;
+    in property <string> t-clear;
+    in property <string> t-save-file;
+    in property <string> t-open;
+    in property <string> t-add;
+    in property <string> t-create;
+    in property <string> t-set;
+    in property <string> t-midi-listen;
+    in property <string> t-midi-active;
+    in property <string> t-midi-idle;
+    in property <string> t-midi-no-device;
+    in property <string> t-midi-empty;
+    in property <string> t-drum-hint;
+    in property <string> t-drum-tempo;
+    in property <string> t-drum-volume;
+    in property <string> t-drum-group;
+    in property <string> t-drum-pattern;
+    in property <string> t-meta;
+    in property <string> t-meta-no-selection;
+    in property <string> t-meta-author;
+    in property <string> t-meta-source;
+    in property <string> t-meta-source-url;
+    in property <string> t-meta-license;
+    in property <string> t-meta-notes;
+    in property <string> t-meta-rating;
+    in property <string> t-meta-no-rating;
+    in property <string> t-meta-favorite;
+    in property <string> t-meta-save;
+    in property <string> t-meta-tags;
+    in property <string> t-meta-collections;
+    in property <string> t-ph-author;
+    in property <string> t-ph-source;
+    in property <string> t-ph-license;
+    in property <string> t-ph-tag;
+    in property <string> t-ph-collection;
+    in property <string> t-sources;
+    in property <string> t-sources-intro;
+    in property <string> t-sources-paid;
+    in property <string> t-sources-author;
+    in property <string> t-sources-license;
+    in property <string> t-sources-open;
+    in property <string> t-slot-hint;
+    in property <string> t-fields;
+    in property <string> t-role-tool;
+    in property <string> t-role-assistant;
+
     // Agent (rozmowa + rozliczenie sesji)
     in property <[ChatRowUi]> chat-rows;
     in property <bool> agent-busy;
@@ -244,8 +294,15 @@ export component AppWindow inherits Window {
     callback toggle-collection(string, bool);          // id kolekcji, czy dodać
     callback new-collection(string);                   // nazwa nowej kolekcji
     callback open-url(string);                         // otwórz link w przeglądarce
-    // Indeksy zakładek prawego panelu, które korzystają z agenta (kolejność Tab niżej:
-    // Changes 0, Binary 1, Agent 2, MCP 3, MIDI 4, DRUM 5, Meta 6, Źródła 7, Ustawienia 8).
+    // Zakładki prawego panelu. Własny pasek zamiast TabWidget: przy 9 zakładkach
+    // w panelu 340px TabWidget ściskał etykiety tak, że się zlewały, a ostatnia była
+    // ucięta — i nie oferował przewijania. Tu tytuły są DANYMI, a `right-tab` stanem.
+    property <[string]> tab-titles: [
+        root.t-changes, root.t-binary, root.t-agent, root.t-mcp,
+        "MIDI", "DRUM", root.t-meta, root.t-sources, root.t-settings,
+    ];
+    property <int> right-tab: 0;
+    // Indeksy zakładek korzystających z agenta (klucz API czytany leniwie).
     property <int> tab-agent: 2;
     property <int> tab-settings: 8;
 
@@ -307,7 +364,7 @@ export component AppWindow inherits Window {
                 // Ostrzeżenie: QuickTone działa równolegle — sync może się rozjechać
                 // (zmiany presetu w QT nie emitują Program Change, którego nasłuchujemy).
                 if root.qt-running: Text {
-                    text: "⚠ QuickTone działa — sync presetu może być niepełny";
+                    text: root.t-qt-warning;
                     color: #e0a020;
                     font-size: 11px;
                     vertical-alignment: center;
@@ -396,8 +453,8 @@ export component AppWindow inherits Window {
                 // podpowiedź transferu (zakładki urządzenia): klik slotu = kopia do Biblioteki
                 if root.active-tab != 2: Text {
                     text: root.device-connected
-                        ? "Klik slotu = otwórz i skopiuj do Biblioteki do edycji"
-                        : "Podłącz urządzenie i użyj przycisku Pobierz w nagłówku";
+                        ? root.t-slot-hint
+                        : root.t-connect-hint;
                     color: #6a6a76;
                     font-size: 11px;
                     wrap: word-wrap;
@@ -690,17 +747,75 @@ export component AppWindow inherits Window {
             background: #1e1e24;
             VerticalBox {
                 padding: 8px;
-                right-tabs := TabWidget {
-                    // Klucz API czytamy z magazynu LENIWIE — tylko gdy użytkownik wejdzie
-                    // w zakładkę korzystającą z agenta. Zakładki bez agenta (MIDI, DRUM…)
-                    // nie mogą wywołać okna zgody Keychain. Indeksy = kolejność Tab poniżej.
-                    changed current-index => {
-                        if (self.current-index == root.tab-agent || self.current-index == root.tab-settings) {
-                            root.ensure-agent-key();
+                // Pasek zakładek: przewijalny w poziomie. Strzałki ◀ ▶ są aktywne tylko,
+                // gdy jest co przewijać, a pasek przewijania stoi na stałe — żeby było
+                // widać, że etykiety wychodzą poza panel (a nie że ich nie ma).
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 2px;
+                    Button {
+                        text: "◀";
+                        width: 26px;
+                        enabled: tabbar.viewport-x < 0px;
+                        clicked => {
+                            tabbar.viewport-x = tabbar.viewport-x + 90px > 0px
+                                ? 0px
+                                : tabbar.viewport-x + 90px;
                         }
                     }
-                    Tab {
-                        title: root.t-changes;
+                    tabbar := ScrollView {
+                        height: 34px;
+                        horizontal-stretch: 1;
+                        vertical-scrollbar-policy: always-off;
+                        horizontal-scrollbar-policy: always-on;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            for t[i] in root.tab-titles: Rectangle {
+                                border-radius: 6px;
+                                // Aktywna zakładka wyraźnie odcięta tłem — sama pogrubiona
+                                // czcionka ginęła w ciasnym pasku.
+                                background: root.right-tab == i ? #3f3f52 : #26262e;
+                                border-width: 1px;
+                                border-color: root.right-tab == i ? #6c6c8a : transparent;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    Text {
+                                        text: t;
+                                        color: root.right-tab == i ? white : #9a9aa6;
+                                        font-size: 12px;
+                                        font-weight: root.right-tab == i ? 700 : 400;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.right-tab = i;
+                                        // Klucz API z magazynu czytamy LENIWIE — tylko przy
+                                        // wejściu w zakładkę agenta/ustawień (patrz ensure-agent-key).
+                                        if (i == root.tab-agent || i == root.tab-settings) {
+                                            root.ensure-agent-key();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Button {
+                        text: "▶";
+                        width: 26px;
+                        enabled: tabbar.viewport-width > tabbar.visible-width
+                            && tabbar.viewport-x > tabbar.visible-width - tabbar.viewport-width;
+                        clicked => {
+                            tabbar.viewport-x = tabbar.viewport-x - 90px < tabbar.visible-width - tabbar.viewport-width
+                                ? tabbar.visible-width - tabbar.viewport-width
+                                : tabbar.viewport-x - 90px;
+                        }
+                    }
+                }
+                // Treść zakładki (jedna widoczna naraz — indeks jak w `tab-titles`).
+                if root.right-tab == 0: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 4px;
                             padding-top: 10px;
@@ -723,8 +838,8 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    Tab {
-                        title: root.t-binary;
+                if root.right-tab == 1: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 4px;
                             spacing: 4px;
@@ -732,7 +847,7 @@ export component AppWindow inherits Window {
                                 spacing: 6px;
                                 alignment: start;
                                 Text {
-                                    text: root.t-binary + " · " + root.bin-groups.length + " pól";
+                                    text: root.t-binary + " · " + root.bin-groups.length + " " + root.t-fields;
                                     color: #8a8a96;
                                     vertical-alignment: center;
                                 }
@@ -786,8 +901,8 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    Tab {
-                        title: root.t-agent;
+                if root.right-tab == 2: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 4px;
                             spacing: 4px;
@@ -810,7 +925,7 @@ export component AppWindow inherits Window {
                                             Text {
                                                 // Rola po ludzku, wyróżniona kolorem roli.
                                                 text: m.role == "user" ? "Ty"
-                                                    : (m.role == "tool" ? "narzędzie" : "asystent");
+                                                    : (m.role == "tool" ? root.t-role-tool : root.t-role-assistant);
                                                 color: m.role == "user" ? #9db4ff
                                                     : (m.role == "tool" ? #b0b0bc : #9bd99b);
                                                 font-size: 10px;
@@ -851,12 +966,12 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    Tab {
-                        title: root.t-mcp;
+                if root.right-tab == 3: VerticalLayout {
+                    vertical-stretch: 1;
                         Text { text: "stdio: mg101-mcp"; color: #8a8a96; wrap: word-wrap; }
                     }
-                    Tab {
-                        title: "MIDI";
+                if root.right-tab == 4: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 6px;
                             spacing: 6px;
@@ -864,23 +979,23 @@ export component AppWindow inherits Window {
                                 spacing: 6px;
                                 alignment: start;
                                 Button {
-                                    text: root.midi-monitor-on ? "⏸ Stop" : "▶ Nasłuch";
+                                    text: root.midi-monitor-on ? "⏸ Stop" : "▶ " + root.t-midi-listen;
                                     primary: root.midi-monitor-on;
                                     clicked => { root.toggle-midi-monitor(); }
                                 }
                                 Button {
-                                    text: "Wyczyść";
+                                    text: root.t-clear;
                                     clicked => { root.clear-midi-log(); }
                                 }
                                 Button {
-                                    text: "Zapisz…";
+                                    text: root.t-save-file;
                                     clicked => { root.save-midi-log(); }
                                 }
                             }
                             Text {
                                 text: root.device-connected
-                                    ? (root.midi-monitor-on ? "Nasłuch aktywny — operuj urządzeniem" : "Włącz nasłuch i operuj urządzeniem")
-                                    : "Podłącz urządzenie, by nasłuchiwać MIDI";
+                                    ? (root.midi-monitor-on ? root.t-midi-active : root.t-midi-idle)
+                                    : root.t-midi-no-device;
                                 color: #8a8a96;
                                 font-size: 11px;
                                 wrap: word-wrap;
@@ -890,19 +1005,18 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
                                 read-only: true;
                                 wrap: no-wrap;
-                                text: root.midi-log == "" ? "(brak komunikatów)" : root.midi-log;
+                                text: root.midi-log == "" ? root.t-midi-empty : root.midi-log;
                             }
                         }
                     }
-                    Tab {
-                        title: "DRUM";
+                if root.right-tab == 5: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 8px;
                             spacing: 10px;
                             alignment: start;
                             Text {
-                                text: root.device-connected ? "Sterowanie perkusją (MIDI CC → urządzenie)"
-                                    : "Podłącz urządzenie, by sterować";
+                                text: root.device-connected ? root.t-drum-hint : root.t-connect-control;
                                 color: #8a8a96; font-size: 11px; wrap: word-wrap;
                             }
                             // Play/Stop (CC81)
@@ -924,7 +1038,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // Tempo (BPM) — odczyt z urządzenia + zapis ramką SysEx.
-                            Text { text: "Tempo (BPM)"; color: #8a8a96; font-size: 11px; }
+                            Text { text: root.t-drum-tempo; color: #8a8a96; font-size: 11px; }
                             HorizontalBox {
                                 spacing: 6px; alignment: start;
                                 drum-bpm := LineEdit {
@@ -935,7 +1049,7 @@ export component AppWindow inherits Window {
                                     accepted(t) => { root.send-drum-tempo(Math.round(t.to-float())); }
                                 }
                                 Button {
-                                    text: "Ustaw";
+                                    text: root.t-set;
                                     enabled: root.device-connected;
                                     clicked => { root.send-drum-tempo(Math.round(drum-bpm.text.to-float())); }
                                 }
@@ -951,14 +1065,14 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // Volume (CC83, 0..100)
-                            Text { text: "Volume"; color: #8a8a96; font-size: 11px; }
+                            Text { text: root.t-drum-volume; color: #8a8a96; font-size: 11px; }
                             drum-vol := Slider {
                                 minimum: 0; maximum: 100; value: 50;
                                 enabled: root.device-connected;
                                 changed(v) => { root.send-control(83, Math.round(v)); }
                             }
                             // Wzorzec — dwupoziomowy wybór: grupa → wzorzec (CC82).
-                            Text { text: "Wzorzec — grupa"; color: #8a8a96; font-size: 11px; }
+                            Text { text: root.t-drum-group; color: #8a8a96; font-size: 11px; }
                             ComboBox {
                                 model: root.drum-group-names;
                                 current-index: root.drum-group-index;
@@ -969,7 +1083,7 @@ export component AppWindow inherits Window {
                                     root.send-control(82, root.drum-group-base[self.current-index]);
                                 }
                             }
-                            Text { text: "Wzorzec"; color: #8a8a96; font-size: 11px; }
+                            Text { text: root.t-drum-pattern; color: #8a8a96; font-size: 11px; }
                             drum-pat := ComboBox {
                                 model: root.drum-group-patterns[root.drum-group-index];
                                 current-index: 0;
@@ -981,32 +1095,32 @@ export component AppWindow inherits Window {
                         }
                     }
                     // Metadane otwartego patcha: autorstwo, pochodzenie, warunki użycia.
-                    Tab {
-                        title: "Meta";
+                if root.right-tab == 6: VerticalLayout {
+                    vertical-stretch: 1;
                         ScrollView {
                             VerticalBox {
                                 padding: 8px;
                                 spacing: 6px;
                                 alignment: start;
                                 if !root.has-selection: Text {
-                                    text: "Wybierz patch, by opisać jego autorstwo i pochodzenie.";
+                                    text: root.t-meta-no-selection;
                                     color: #8a8a96; font-size: 11px; wrap: word-wrap;
                                 }
                                 if root.has-selection: VerticalBox {
                                     padding: 0px;
                                     spacing: 6px;
                                     alignment: start;
-                                    Text { text: "Autor"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-author; color: #8a8a96; font-size: 11px; }
                                     meta-author := LineEdit {
                                         text: root.meta-author;
-                                        placeholder-text: "np. Jimmy Lin";
+                                        placeholder-text: root.t-ph-author;
                                     }
-                                    Text { text: "Źródło (paczka)"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-source; color: #8a8a96; font-size: 11px; }
                                     meta-source := LineEdit {
                                         text: root.meta-source;
-                                        placeholder-text: "np. JL-British Pack";
+                                        placeholder-text: root.t-ph-source;
                                     }
-                                    Text { text: "Adres źródła"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-source-url; color: #8a8a96; font-size: 11px; }
                                     HorizontalBox {
                                         padding: 0px; spacing: 4px;
                                         meta-url := LineEdit {
@@ -1014,22 +1128,22 @@ export component AppWindow inherits Window {
                                             placeholder-text: "https://…";
                                         }
                                         Button {
-                                            text: "Otwórz";
+                                            text: root.t-open;
                                             enabled: meta-url.text != "";
                                             clicked => { root.open-url(meta-url.text); }
                                         }
                                     }
-                                    Text { text: "Licencja / warunki użycia"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-license; color: #8a8a96; font-size: 11px; }
                                     meta-license := LineEdit {
                                         text: root.meta-license;
-                                        placeholder-text: "np. darmowe, bez redystrybucji";
+                                        placeholder-text: root.t-ph-license;
                                     }
-                                    Text { text: "Notatki"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-notes; color: #8a8a96; font-size: 11px; }
                                     meta-notes := LineEdit {
                                         text: root.meta-notes;
                                     }
                                     // Ocena 0–5 + ulubiony.
-                                    Text { text: "Ocena"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-rating; color: #8a8a96; font-size: 11px; }
                                     HorizontalBox {
                                         padding: 0px; spacing: 4px; alignment: start;
                                         for star[i] in [1, 2, 3, 4, 5]: Button {
@@ -1040,7 +1154,7 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         Button {
-                                            text: "bez oceny";
+                                            text: root.t-meta-no-rating;
                                             clicked => {
                                                 root.save-meta(meta-author.text, meta-source.text, meta-url.text,
                                                     meta-license.text, meta-notes.text, 0, fav.checked);
@@ -1048,7 +1162,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     fav := CheckBox {
-                                        text: "Ulubiony";
+                                        text: root.t-meta-favorite;
                                         checked: root.meta-favorite;
                                         toggled => {
                                             root.save-meta(meta-author.text, meta-source.text, meta-url.text,
@@ -1056,19 +1170,19 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     Button {
-                                        text: "Zapisz metadane";
+                                        text: root.t-meta-save;
                                         clicked => {
                                             root.save-meta(meta-author.text, meta-source.text, meta-url.text,
                                                 meta-license.text, meta-notes.text, root.meta-rating, fav.checked);
                                         }
                                     }
                                     // Tagi
-                                    Text { text: "Tagi"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-tags; color: #8a8a96; font-size: 11px; }
                                     HorizontalBox {
                                         padding: 0px; spacing: 4px;
-                                        new-tag := LineEdit { placeholder-text: "np. metal"; }
+                                        new-tag := LineEdit { placeholder-text: root.t-ph-tag; }
                                         Button {
-                                            text: "Dodaj";
+                                            text: root.t-add;
                                             enabled: new-tag.text != "";
                                             clicked => { root.add-tag(new-tag.text); new-tag.text = ""; }
                                         }
@@ -1082,12 +1196,12 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     // Kolekcje
-                                    Text { text: "Kolekcje"; color: #8a8a96; font-size: 11px; }
+                                    Text { text: root.t-meta-collections; color: #8a8a96; font-size: 11px; }
                                     HorizontalBox {
                                         padding: 0px; spacing: 4px;
-                                        new-coll := LineEdit { placeholder-text: "nowa kolekcja"; }
+                                        new-coll := LineEdit { placeholder-text: root.t-ph-collection; }
                                         Button {
-                                            text: "Utwórz";
+                                            text: root.t-create;
                                             enabled: new-coll.text != "";
                                             clicked => { root.new-collection(new-coll.text); new-coll.text = ""; }
                                         }
@@ -1102,15 +1216,15 @@ export component AppWindow inherits Window {
                         }
                     }
                     // Katalog publicznych źródeł patchy — ODNOŚNIKI, nie pliki.
-                    Tab {
-                        title: "Źródła";
+                if root.right-tab == 7: VerticalLayout {
+                    vertical-stretch: 1;
                         ScrollView {
                             VerticalBox {
                                 padding: 8px;
                                 spacing: 8px;
                                 alignment: start;
                                 Text {
-                                    text: "Gdzie zdobyć patche MG-101. Aplikacja nie zawiera cudzych plików — żadne z tych źródeł nie daje licencji na redystrybucję. Pobierz od autora, potem zaimportuj (import folderu tworzy kolekcję i zapisuje źródło).";
+                                    text: root.t-sources-intro;
                                     color: #8a8a96; font-size: 11px; wrap: word-wrap;
                                 }
                                 for s in root.patch-sources: VerticalBox {
@@ -1125,23 +1239,23 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                         if s.paid: Text {
-                                            text: "płatne";
+                                            text: root.t-sources-paid;
                                             color: #ffb86c; font-size: 10px; vertical-alignment: center;
                                         }
                                     }
-                                    Text { text: "Autor: " + s.author; color: #c8b6ff; font-size: 11px; wrap: word-wrap; }
+                                    Text { text: root.t-sources-author + " " + s.author; color: #c8b6ff; font-size: 11px; wrap: word-wrap; }
                                     Text { text: s.description; color: #8a8a96; font-size: 11px; wrap: word-wrap; }
-                                    Text { text: "Licencja: " + s.license; color: #6a6a76; font-size: 10px; wrap: word-wrap; }
+                                    Text { text: root.t-sources-license + " " + s.license; color: #6a6a76; font-size: 10px; wrap: word-wrap; }
                                     Button {
-                                        text: "Otwórz stronę autora";
+                                        text: root.t-sources-open;
                                         clicked => { root.open-url(s.url); }
                                     }
                                 }
                             }
                         }
                     }
-                    Tab {
-                        title: root.t-settings;
+                if root.right-tab == 8: VerticalLayout {
+                    vertical-stretch: 1;
                         VerticalBox {
                             padding: 6px;
                             spacing: 6px;
@@ -1167,7 +1281,6 @@ export component AppWindow inherits Window {
                 }
             }
         }
-    }
     }
 
     // pasek błędu (na dole, gdy niepusty)

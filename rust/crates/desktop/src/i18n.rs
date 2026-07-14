@@ -129,6 +129,115 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
             "Operacja nie powiodła się",
             "Operation failed",
         ),
+        // --- Urządzenie / nagłówek ---
+        (
+            "device.qt_warning",
+            "⚠ QuickTone działa — sync presetu może być niepełny",
+            "⚠ QuickTone is running — preset sync may be incomplete",
+        ),
+        (
+            "device.connect_hint",
+            "Podłącz urządzenie i użyj przycisku Pobierz w nagłówku",
+            "Connect the device and use the Fetch button in the header",
+        ),
+        (
+            "device.connect_to_control",
+            "Podłącz urządzenie, by sterować",
+            "Connect the device to control it",
+        ),
+        // --- Wspólne akcje ---
+        ("action.clear", "Wyczyść", "Clear"),
+        ("action.save_file", "Zapisz…", "Save…"),
+        ("action.open", "Otwórz", "Open"),
+        ("action.add", "Dodaj", "Add"),
+        ("action.create", "Utwórz", "Create"),
+        ("action.set", "Ustaw", "Set"),
+        // --- Monitor MIDI ---
+        ("midi.listen", "Nasłuch", "Listen"),
+        (
+            "midi.active",
+            "Nasłuch aktywny — operuj urządzeniem",
+            "Listening — operate the device",
+        ),
+        (
+            "midi.idle",
+            "Włącz nasłuch i operuj urządzeniem",
+            "Turn on listening and operate the device",
+        ),
+        (
+            "midi.no_device",
+            "Podłącz urządzenie, by nasłuchiwać MIDI",
+            "Connect the device to listen to MIDI",
+        ),
+        ("midi.empty", "(brak komunikatów)", "(no messages)"),
+        // --- DRUM ---
+        (
+            "drum.hint",
+            "Sterowanie perkusją (MIDI CC → urządzenie)",
+            "Drum control (MIDI CC → device)",
+        ),
+        ("drum.tempo", "Tempo (BPM)", "Tempo (BPM)"),
+        ("drum.volume", "Głośność", "Volume"),
+        ("drum.group", "Wzorzec — grupa", "Pattern — group"),
+        ("drum.pattern", "Wzorzec", "Pattern"),
+        // --- Metadane patcha ---
+        ("inspector.meta", "Meta", "Meta"),
+        (
+            "meta.no_selection",
+            "Wybierz patch, by opisać jego autorstwo i pochodzenie.",
+            "Select a patch to describe its authorship and origin.",
+        ),
+        ("meta.author", "Autor", "Author"),
+        ("meta.source", "Źródło (paczka)", "Source (pack)"),
+        ("meta.source_url", "Adres źródła", "Source address"),
+        (
+            "meta.license",
+            "Licencja / warunki użycia",
+            "License / terms of use",
+        ),
+        ("meta.notes", "Notatki", "Notes"),
+        ("meta.rating", "Ocena", "Rating"),
+        ("meta.no_rating", "bez oceny", "no rating"),
+        ("meta.favorite", "Ulubiony", "Favorite"),
+        ("meta.save", "Zapisz metadane", "Save metadata"),
+        ("meta.tags", "Tagi", "Tags"),
+        ("meta.collections", "Kolekcje", "Collections"),
+        ("meta.ph_author", "np. Jimmy Lin", "e.g. Jimmy Lin"),
+        (
+            "meta.ph_source",
+            "np. JL-British Pack",
+            "e.g. JL-British Pack",
+        ),
+        (
+            "meta.ph_license",
+            "np. darmowe, bez redystrybucji",
+            "e.g. free, no redistribution",
+        ),
+        ("meta.ph_tag", "np. metal", "e.g. metal"),
+        ("meta.ph_collection", "nowa kolekcja", "new collection"),
+        // --- Katalog źródeł patchy ---
+        ("inspector.sources", "Źródła", "Sources"),
+        (
+            "sources.intro",
+            "Gdzie zdobyć patche MG-101. Aplikacja nie zawiera cudzych plików — żadne z tych źródeł nie daje licencji na redystrybucję. Pobierz od autora, potem zaimportuj (import folderu tworzy kolekcję i zapisuje źródło).",
+            "Where to get MG-101 patches. This app bundles no third-party files — none of these sources grants redistribution rights. Download from the author, then import (importing a folder creates a collection and records the source).",
+        ),
+        ("sources.paid", "płatne", "paid"),
+        ("sources.author", "Autor:", "Author:"),
+        ("sources.license", "Licencja:", "License:"),
+        (
+            "sources.open",
+            "Otwórz stronę autora",
+            "Open the author's page",
+        ),
+        (
+            "slot.hint",
+            "Klik slotu = otwórz i skopiuj do Biblioteki do edycji",
+            "Click a slot to open it and copy it to the Library for editing",
+        ),
+        ("chat.role_tool", "narzędzie", "tool"),
+        ("chat.role_assistant", "asystent", "assistant"),
+        ("inspector.fields", "pól", "fields"),
     ];
     for (k, pl, en) in TABLE {
         if *k == key {
@@ -162,6 +271,40 @@ mod tests {
         assert_eq!(Lang::from_code(Lang::Pl.code()), Lang::Pl);
         assert_eq!(Lang::from_code(Lang::En.code()), Lang::En);
         assert_eq!(Lang::from_code("xx"), Lang::En);
+    }
+
+    /// Regresja: nowe sekcje UI (Meta, Źródła, DRUM, MIDI) miały tekst wpisany na
+    /// sztywno po polsku — przy EN zostawał polski. Ten test pilnuje, że KAŻDY klucz
+    /// używany przez UI istnieje i ma OBA tłumaczenia, i że PL≠EN tam, gdzie powinno.
+    #[test]
+    fn all_ui_keys_exist_in_both_languages() {
+        const KEYS: &[&str] = &[
+            "device.qt_warning", "device.connect_hint", "device.connect_to_control",
+            "device.none", "slot.hint", "inspector.fields",
+            "chat.role_tool", "chat.role_assistant",
+            "action.clear", "action.save_file", "action.open", "action.add",
+            "action.create", "action.set",
+            "midi.listen", "midi.active", "midi.idle", "midi.no_device", "midi.empty",
+            "drum.hint", "drum.tempo", "drum.volume", "drum.group", "drum.pattern",
+            "inspector.meta", "meta.no_selection", "meta.author", "meta.source",
+            "meta.source_url", "meta.license", "meta.notes", "meta.rating",
+            "meta.no_rating", "meta.favorite", "meta.save", "meta.tags",
+            "meta.collections", "meta.ph_author", "meta.ph_source", "meta.ph_license",
+            "meta.ph_tag", "meta.ph_collection",
+            "inspector.sources", "sources.intro", "sources.paid", "sources.author",
+            "sources.license", "sources.open",
+        ];
+        for key in KEYS {
+            let pl = tr(Lang::Pl, key);
+            let en = tr(Lang::En, key);
+            assert_ne!(pl, "??", "brak klucza {key} (UI pokaże ??)");
+            assert!(!pl.is_empty() && !en.is_empty(), "{key}: puste tłumaczenie");
+            // Te akurat MUSZĄ się różnić — gdyby były identyczne, znaczyłoby to, że
+            // ktoś wkleił polski tekst także do kolumny EN.
+            if !matches!(*key, "inspector.meta" | "drum.tempo") {
+                assert_ne!(pl, en, "{key}: PL i EN identyczne — czy EN na pewno przetłumaczone?");
+            }
+        }
     }
 
     #[test]

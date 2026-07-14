@@ -5,6 +5,8 @@
     "nie znaczy 'wolno zapakować w cudzą aplikację'. Dlatego aplikacja NIE zawiera",
     "cudzych patchy — odsyła użytkownika do autora, a po imporcie przypisuje patchowi",
     "autora, źródło i warunki użycia (PatchMeta).",
+    "Opis i licencja są DWUJĘZYCZNE (pl/en) — to treść widoczna w UI, więc podlega",
+    "tłumaczeniu tak samo jak etykiety. Nazwa i autor to nazwy własne: bez tłumaczenia.",
     "Dodając wpis: podaj autora i realne warunki; nie wpisuj 'public domain' na wyrost."
   ],
   "sources": [
@@ -13,36 +15,44 @@
       "name": "Essentials for MG-101",
       "author": "ChopTones",
       "url": "https://www.choptones.com/products/essentials-nux-mg-101",
-      "license": "Komercyjna (płatna). Licencja dla kupującego, bez prawa do redystrybucji.",
       "paid": true,
-      "description": "Komercyjna paczka presetów i IR-ów dla MG-101 od ChopTones."
+      "license_pl": "Komercyjna (płatna). Licencja dla kupującego, bez prawa do redystrybucji.",
+      "license_en": "Commercial (paid). Licensed to the buyer; no redistribution rights.",
+      "description_pl": "Komercyjna paczka presetów i IR-ów dla MG-101 od ChopTones.",
+      "description_en": "Commercial preset and IR pack for the MG-101 by ChopTones."
     },
     {
       "id": "jl-british-pack",
       "name": "JL-British Pack",
       "author": "Jimmy Lin",
       "url": "https://www.youtube.com/watch?v=Gp5yME3YOeY",
-      "license": "Darmowa paczka autorska. Brak wyraźnej licencji na redystrybucję — pobierz od autora.",
       "paid": false,
-      "description": "Darmowa paczka patchy w stylu brytyjskim; link do pobrania w opisie filmu autora."
+      "license_pl": "Darmowa paczka autorska. Brak wyraźnej licencji na redystrybucję — pobierz od autora.",
+      "license_en": "Free pack by the author. No explicit redistribution license — download from the author.",
+      "description_pl": "Darmowa paczka patchy w stylu brytyjskim; link do pobrania w opisie filmu autora.",
+      "description_en": "Free British-voiced patch pack; download link in the author's video description."
     },
     {
       "id": "gearpage-thread",
-      "name": "Wątek MG-101 Patches (TheGearPage)",
-      "author": "Społeczność TheGearPage",
+      "name": "MG-101 Patches (TheGearPage)",
+      "author": "TheGearPage community",
       "url": "https://www.thegearpage.net/board/index.php?threads/nux-mg-101-patches.2618726/",
-      "license": "Patche użytkowników — prawa przy autorach poszczególnych wpisów.",
       "paid": false,
-      "description": "Forumowa wymiana patchy MG-101 między użytkownikami."
+      "license_pl": "Patche użytkowników — prawa przy autorach poszczególnych wpisów.",
+      "license_en": "User-submitted patches — rights remain with the individual authors.",
+      "description_pl": "Forumowa wymiana patchy MG-101 między użytkownikami.",
+      "description_en": "Forum thread where users share MG-101 patches."
     },
     {
       "id": "nux-quicktone",
-      "name": "QuickTone (edytor producenta)",
+      "name": "QuickTone",
       "author": "NUX / Cherub",
       "url": "https://nuxaudio.com/product/mg101/",
-      "license": "Oprogramowanie producenta. Bank fabryczny należy do NUX.",
       "paid": false,
-      "description": "Oficjalny edytor NUX — źródło banku fabrycznego i aktualizacji firmware."
+      "license_pl": "Oprogramowanie producenta. Bank fabryczny należy do NUX.",
+      "license_en": "Manufacturer software. The factory bank is owned by NUX.",
+      "description_pl": "Oficjalny edytor NUX — źródło banku fabrycznego i aktualizacji firmware.",
+      "description_en": "Official NUX editor — source of the factory bank and firmware updates."
     }
   ]
 }
