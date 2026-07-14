@@ -17,6 +17,7 @@ use mg101_core::{DeviceProfile, EffectCatalog};
 use mg101_studio::file_ops;
 use serde_json::{Map, Value};
 
+pub mod bridge_client;
 pub mod server;
 
 /// Narzędzia wystawiane wyłącznie przez MCP (poza rejestrem wariantu File):
@@ -62,7 +63,14 @@ fn as_object(schema: Value) -> Map<String, Value> {
 /// Pełna lista narzędzi serwera MCP (port `allDefinitions(variant:.file)` +
 /// `inspect_patch`).
 pub fn tool_list() -> Vec<McpTool> {
-    let mut tools: Vec<McpTool> = ToolDefinition::all(Variant::File)
+    tool_list_for(Variant::File)
+}
+
+/// Lista narzędzi dla wariantu. `File` = edycja plików (`input`/`output`).
+/// `Library` = tryb mostkowy: narzędzia działają na ŻYWEJ Bibliotece aplikacji
+/// (patchID + expectedRevision), więc zmiany widać w UI natychmiast.
+pub fn tool_list_for(variant: Variant) -> Vec<McpTool> {
+    let mut tools: Vec<McpTool> = ToolDefinition::all(variant)
         .into_iter()
         .filter(|d| is_mcp_tool(&d.name))
         .map(|d| McpTool {
@@ -73,6 +81,11 @@ pub fn tool_list() -> Vec<McpTool> {
         })
         .collect();
 
+    // inspect_patch to narzędzie PLIKOWE (czyta ścieżkę) — w trybie bibliotecznym
+    // jego rolę pełni get_patch, więc nie dokładamy go tam.
+    if variant != Variant::File {
+        return tools;
+    }
     // inspect_patch: odczyt pliku patcha → JSON (bloki, nazwa, bpm, ir, pola).
     tools.push(McpTool {
         name: INSPECT_PATCH.into(),

@@ -12,6 +12,8 @@ use std::time::Duration;
 use mg101_agent_core::{AgentConfig, Provider};
 use mg101_core::wal::{JournalStore, TransactionEntry, WalError};
 use mg101_desktop::agent::{AgentEvent, ChatRunner, SYSTEM_PROMPT};
+use mg101_desktop::claude_code::{CcEvent, CcOptions, ClaudeCodeRunner};
+use mg101_desktop::settings::Backend;
 use mg101_desktop::vm::LibraryTab;
 use mg101_desktop::{Lang, ViewModel};
 use mg101_library::SqliteStore;
@@ -232,6 +234,7 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_binary(l("inspector.binary"));
     ui.set_t_agent(l("inspector.agent"));
     ui.set_t_mcp(l("inspector.mcp"));
+    ui.set_t_mcp_hint(l("mcp.hint"));
     ui.set_t_no_changes(l("inspector.no_changes"));
     ui.set_t_duplicate(l("action.duplicate"));
     ui.set_t_delete(l("action.delete"));
@@ -286,6 +289,10 @@ fn apply_labels(ui: &AppWindow, vm: &Vm) {
     ui.set_t_drum_volume(l("drum.volume"));
     ui.set_t_drum_group(l("drum.group"));
     ui.set_t_drum_pattern(l("drum.pattern"));
+    ui.set_t_subscription(l("settings.subscription"));
+    ui.set_t_cc_hint(l("settings.cc_hint"));
+    ui.set_t_cc_bin(l("settings.cc_bin"));
+    ui.set_t_bridge(l("settings.bridge"));
     ui.set_t_meta(l("inspector.meta"));
     ui.set_t_meta_no_selection(l("meta.no_selection"));
     ui.set_t_meta_author(l("meta.author"));
@@ -691,7 +698,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let studio =
         Studio::new(store, profile, catalog, 0).with_journal(Box::new(SessionJournal::default()));
     let vm: Rc<RefCell<Vm>> = Rc::new(RefCell::new(ViewModel::new(studio, Lang::En)));
+    // Trwałe ustawienia: dostawca, endpoint, model, język, mostek MCP.
+    // Dotąd nic z tego nie przeżywało restartu.
+    {
+        let cfg = mg101_desktop::settings::Settings::load(&data_dir);
+        let mut vmb = vm.borrow_mut();
+        vmb.set_lang(Lang::from_code(&cfg.lang));
+        vmb.set_agent_config(AgentConfig {
+            provider: match cfg.backend {
+                mg101_desktop::settings::Backend::OpenAiCompatible => Provider::OpenAiCompatible,
+                // ClaudeCode nie chodzi po HTTP — konfigurację dostawcy zostawiamy
+                // anthropicową (nieużywaną), a przebieg idzie przez `claude -p`.
+                _ => Provider::Anthropic,
+            },
+            endpoint: cfg.endpoint.clone(),
+            model: cfg.model.clone(),
+            api_key: String::new(),
+        });
+        vmb.set_settings(cfg);
+    }
     let runner: Rc<RefCell<Option<ChatRunner>>> = Rc::new(RefCell::new(None));
+    // Backend „subskrypcja”: przebieg prowadzi lokalny Claude Code, a narzędzia
+    // dostaje przez MCP → mostek (nie przez nasz kanał — stąd osobny uchwyt).
+    let cc_runner: Rc<RefCell<Option<ClaudeCodeRunner>>> = Rc::new(RefCell::new(None));
+    // Id sesji Claude Code — pozwala kolejnej turze wznowić rozmowę (`--resume`)
+    // zamiast zaczynać od zera.
+    let cc_session: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    // Mostek MCP → żywe Studio. Opcjonalny (ustawienie): gdy wyłączony, nic nie
+    // nasłuchuje. Gdy włączony, klienci (np. Claude Code) edytują DZIAŁAJĄCĄ
+    // Bibliotekę, a nie pliki — zmiany widać w UI natychmiast.
+    let bridge: Rc<RefCell<Option<mg101_desktop::bridge::Bridge>>> = Rc::new(RefCell::new(None));
+    if vm.borrow().bridge_enabled() {
+        match mg101_desktop::bridge::Bridge::start() {
+            Some(b) => {
+                eprintln!("Mostek MCP: 127.0.0.1:{} (token w ~/.mg101_bridge_token)", b.port);
+                *bridge.borrow_mut() = Some(b);
+            }
+            None => eprintln!("Mostek MCP: nie udało się otworzyć portu — wyłączony."),
+        }
+    }
     // Postęp przebiegu agenta: kiedy ruszył i jakie narzędzie właśnie woła.
     // Bez tego UI milczał kilkadziesiąt sekund i wyglądał na zawieszony.
     let agent_progress: Rc<RefCell<Option<(std::time::Instant, String)>>> =
@@ -757,6 +802,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_drum_group_patterns(ModelRc::new(VecModel::from(patterns)));
         ui.set_drum_group_base(ModelRc::new(VecModel::from(bases)));
     }
+    // Stan ustawień w UI (backend, mostek, ścieżka do Claude Code).
+    {
+        let vmb = vm.borrow();
+        let cfg = vmb.settings();
+        ui.set_provider_index(cfg.backend.as_index());
+        ui.set_cfg_endpoint(cfg.endpoint.clone().into());
+        ui.set_cfg_model(cfg.model.clone().into());
+        ui.set_cfg_claude_bin(cfg.claude_bin.clone().into());
+        ui.set_cfg_bridge(cfg.bridge_enabled);
+        let lang = vmb.lang();
+        let status = match bridge.borrow().as_ref() {
+            Some(b) => format!(
+                "{} (port {})",
+                mg101_desktop::i18n::tr(lang, "settings.bridge_on"),
+                b.port
+            ),
+            None => mg101_desktop::i18n::tr(lang, "settings.bridge_off").to_string(),
+        };
+        ui.set_cfg_bridge_status(status.into());
+    }
+
     detect_device(&ui, vm.borrow().lang());
     // Uchwyt zrzutu w tle (W2) — Some tylko podczas trwającego zrzutu.
     let dumper: Rc<RefCell<Option<mg101_desktop::device::Dumper>>> = Rc::new(RefCell::new(None));
@@ -893,24 +959,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             refresh(&ui, &mut vmc.borrow_mut());
         });
     }
-    wire!(on_save_settings, |vm, pidx, endpoint, model, key| {
-        let provider = if pidx == 1 {
-            Provider::OpenAiCompatible
-        } else {
-            Provider::Anthropic
-        };
-        vm.set_agent_config(AgentConfig {
-            provider,
-            endpoint: endpoint.to_string(),
-            model: model.to_string(),
-            api_key: key.to_string(),
+    {
+        let dir = data_dir.clone();
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        ui.on_save_settings(move |pidx, endpoint, model, key, bridge_on, claude_bin| {
+            let Some(ui) = uw.upgrade() else { return };
+            let mut vm = vmc.borrow_mut();
+            let backend = mg101_desktop::settings::Backend::from_index(pidx);
+            let provider = match backend {
+                mg101_desktop::settings::Backend::OpenAiCompatible => Provider::OpenAiCompatible,
+                _ => Provider::Anthropic,
+            };
+            vm.set_agent_config(AgentConfig {
+                provider,
+                endpoint: endpoint.to_string(),
+                model: model.to_string(),
+                api_key: key.to_string(),
+            });
+            // Trwałe ustawienia na dysk (klucz API NIE trafia do pliku — Keychain).
+            let cfg = mg101_desktop::settings::Settings {
+                backend,
+                endpoint: endpoint.to_string(),
+                model: model.to_string(),
+                lang: vm.lang().code().to_string(),
+                bridge_enabled: bridge_on,
+                claude_bin: claude_bin.to_string(),
+            };
+            if let Err(e) = cfg.save(&dir) {
+                vm.report_error(format!("zapis ustawień: {e}"));
+            }
+            let bridge_changed = vm.bridge_enabled() != bridge_on;
+            vm.set_settings(cfg);
+            // Klucz API tylko dla backendów, które go używają.
+            if backend.needs_api_key() {
+                if let Err(e) = mg101_desktop::keychain::save_key(provider, &key) {
+                    vm.report_error(format!("zapis klucza do magazynu: {e}"));
+                }
+            }
+            if bridge_changed {
+                // Mostek startuje raz, przy uruchomieniu — zmiana wymaga restartu.
+                let msg = mg101_desktop::i18n::tr(vm.lang(), "settings.bridge_restart").to_string();
+                vm.report_error(msg);
+            }
+            refresh(&ui, &mut vm);
         });
-        // Persystencja klucza w magazynie sekretów (parytet v1) — błąd tylko
-        // sygnalizujemy, konfiguracja w pamięci i tak działa do końca sesji.
-        if let Err(e) = mg101_desktop::keychain::save_key(provider, &key) {
-            vm.report_error(format!("zapis klucza do magazynu: {e}"));
-        }
-    });
+    }
 
     // Połącz i zrzuć banki (W2): startuje wątek zrzutu dla wykrytego urządzenia.
     {
@@ -1210,11 +1304,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ks = key_load.clone();
         let pending = pending_run.clone();
         let progress = agent_progress.clone();
+        let ccslot = cc_runner.clone();
+        let ccsess = cc_session.clone();
+        let ccdir = data_dir.clone();
         ui.on_send_message(move |text| {
             let Some(ui) = uw.upgrade() else { return };
             let mut vm = vmc.borrow_mut();
-            if slot.borrow().is_some() || *pending.borrow() {
+            if slot.borrow().is_some() || ccslot.borrow().is_some() || *pending.borrow() {
                 return; // przebieg już trwa (albo czeka na klucz)
+            }
+            // Backend „subskrypcja”: nie potrzebuje klucza API — pętlę prowadzi
+            // lokalny Claude Code, a Bibliotekę widzi przez MCP → mostek.
+            if vm.settings().backend == Backend::ClaudeCode {
+                if !vm.bridge_enabled() {
+                    let msg = mg101_desktop::i18n::tr(vm.lang(), "agent.cc_needs_bridge").to_string();
+                    vm.report_error(msg);
+                    refresh(&ui, &mut vm);
+                    return;
+                }
+                vm.push_user_message(&text);
+                let opts = CcOptions {
+                    claude_bin: vm.settings().claude_bin.clone(),
+                    model: vm.settings().model.clone(),
+                    session: ccsess.borrow().clone(),
+                    work_dir: ccdir.clone(),
+                };
+                *ccslot.borrow_mut() = Some(ClaudeCodeRunner::start(text.to_string(), opts));
+                *progress.borrow_mut() = Some((std::time::Instant::now(), String::new()));
+                ui.set_agent_busy(true);
+                ui.set_agent_status(agent_status_text(vm.lang(), &progress.borrow()).into());
+                refresh(&ui, &mut vm);
+                return;
             }
             if vm.is_agent_configured() {
                 vm.push_user_message(&text);
@@ -1321,6 +1441,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // Odśwież tylko po realnej pracy — nie przebudowuj UI 25×/s bez potrzeby.
             if did_work || done {
+                refresh(&ui, &mut vmc.borrow_mut());
+            }
+        });
+    }
+
+    // Pompa Claude Code: tylko zdarzenia (postęp/koniec/błąd). Narzędzi tu nie ma —
+    // Claude Code woła je sam przez MCP, a te trafiają do Studio pompą mostka niżej.
+    // Dlatego po zakończeniu przebiegu MUSIMY odświeżyć UI: Biblioteka zmieniła się
+    // „z boku”, bez naszego `execute_tool`.
+    let cc_pump = Timer::default();
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let slot = cc_runner.clone();
+        let sess = cc_session.clone();
+        let progress = agent_progress.clone();
+        cc_pump.start(TimerMode::Repeated, Duration::from_millis(60), move || {
+            let Some(ui) = uw.upgrade() else { return };
+            if slot.borrow().is_none() {
+                return;
+            }
+            let mut done = false;
+            {
+                let mut vm = vmc.borrow_mut();
+                let guard = slot.borrow();
+                if let Some(r) = guard.as_ref() {
+                    while let Some(ev) = r.try_event() {
+                        match ev {
+                            CcEvent::Session(id) => *sess.borrow_mut() = Some(id),
+                            CcEvent::Tool(name) => {
+                                if let Some((_, tool)) = progress.borrow_mut().as_mut() {
+                                    *tool = name;
+                                }
+                            }
+                            CcEvent::Done { text, usage } => {
+                                vm.apply_cc_outcome(text, usage);
+                                done = true;
+                            }
+                            CcEvent::Error(e) => {
+                                vm.report_error(e);
+                                done = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if done {
+                *slot.borrow_mut() = None;
+                *progress.borrow_mut() = None;
+                ui.set_agent_busy(false);
+                ui.set_agent_status(SharedString::new());
+                refresh(&ui, &mut vmc.borrow_mut());
+            } else {
+                let lang = vmc.borrow().lang();
+                ui.set_agent_status(agent_status_text(lang, &progress.borrow()).into());
+            }
+        });
+    }
+
+    // Pompa mostka: wykonuje żądania klientów MCP na żywym Studio (wątek UI).
+    // Osobny Timer i krótki takt — klient MCP czeka synchronicznie na odpowiedź.
+    // Status mostka w zakładce MCP: czy zewnętrzny agent jest podłączony i co robi.
+    // Osobny, wolny takt (1 s) — to podgląd stanu, nie ścieżka gorąca.
+    let mcp_status_timer = Timer::default();
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let br = bridge.clone();
+        let cmd: SharedString = format!(
+            "claude mcp add mg101 -- {} --bridge",
+            mg101_desktop::claude_code::mcp_bin_path()
+        )
+        .into();
+        let update = move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let lang = vmc.borrow().lang();
+            let guard = br.borrow();
+            let status = guard.as_ref().map(|b| b.status());
+            let (head, detail) = mg101_desktop::bridge::describe(status.as_ref(), lang);
+            ui.set_mcp_bridge_on(status.is_some());
+            ui.set_mcp_clients(status.as_ref().map(|s| s.clients as i32).unwrap_or(0));
+            ui.set_mcp_status(head.into());
+            ui.set_mcp_detail(detail.into());
+            ui.set_mcp_cmd(cmd.clone());
+        };
+        update(); // od razu, żeby zakładka nie mrugała pustką przez pierwszą sekundę
+        mcp_status_timer.start(TimerMode::Repeated, Duration::from_secs(1), update);
+    }
+
+    let bridge_pump = Timer::default();
+    {
+        let uw = ui.as_weak();
+        let vmc = vm.clone();
+        let br = bridge.clone();
+        let psync = presync.clone();
+        bridge_pump.start(TimerMode::Repeated, Duration::from_millis(30), move || {
+            let Some(ui) = uw.upgrade() else { return };
+            let pending = match br.borrow().as_ref() {
+                Some(b) => b.poll(),
+                None => return,
+            };
+            if pending.is_empty() {
+                return;
+            }
+            let mut changed = false;
+            for req in pending {
+                let mut vm = vmc.borrow_mut();
+                let result = match mg101_commands::Command::parse(&req.tool, &req.args) {
+                    Ok(cmd) => {
+                        let res = match handle_drum_command(&cmd, &psync, vm.lang()) {
+                            Some(r) => r,
+                            None => vm.execute_tool(&cmd),
+                        };
+                        if !matches!(cmd.kind(), mg101_commands::Kind::Read) {
+                            changed = true;
+                        }
+                        res
+                    }
+                    Err(e) => Err(e.to_string()),
+                };
+                drop(vm);
+                req.respond(result);
+            }
+            // Mutacja z zewnątrz → odśwież UI, żeby zmiany było widać natychmiast.
+            if changed {
                 refresh(&ui, &mut vmc.borrow_mut());
             }
         });

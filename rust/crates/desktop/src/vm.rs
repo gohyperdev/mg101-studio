@@ -174,6 +174,8 @@ pub struct ViewModel<S: LibraryStore> {
     agent_config: AgentConfig,
     chat: Vec<ChatMessage>,
     session_usage: Usage,
+    /// Trwałe ustawienia (dostawca, endpoint, model, mostek MCP, język).
+    settings: crate::settings::Settings,
 }
 
 impl<S: LibraryStore> ViewModel<S> {
@@ -188,10 +190,25 @@ impl<S: LibraryStore> ViewModel<S> {
             agent_config: default_agent_config(),
             chat: Vec::new(),
             session_usage: Usage::default(),
+            settings: crate::settings::Settings::default(),
         }
     }
 
     // --- Agent (konfiguracja, rozmowa, rozliczenie sesji) ---
+
+    /// Trwałe ustawienia aplikacji (dostawca, endpoint, model, mostek, język).
+    pub fn settings(&self) -> &crate::settings::Settings {
+        &self.settings
+    }
+
+    pub fn set_settings(&mut self, s: crate::settings::Settings) {
+        self.settings = s;
+    }
+
+    /// Czy mostek MCP → żywe Studio ma być uruchomiony.
+    pub fn bridge_enabled(&self) -> bool {
+        self.settings.bridge_enabled
+    }
 
     pub fn agent_config(&self) -> &AgentConfig {
         &self.agent_config
@@ -221,6 +238,14 @@ impl<S: LibraryStore> ViewModel<S> {
     /// Zastępuje historię wynikiem przebiegu agenta i dolicza zużycie tokenów.
     pub fn apply_run_outcome(&mut self, history: Vec<ChatMessage>, usage: Usage) {
         self.chat = history;
+        self.session_usage.add(usage);
+    }
+
+    /// Dopisuje odpowiedź backendu Claude Code. Inaczej niż [`Self::apply_run_outcome`]
+    /// *nie zastępuje* historii: pętlę narzędziową prowadzi Claude Code po swojej
+    /// stronie (i tam trzyma swój przebieg), a my widzimy tylko finalny tekst.
+    pub fn apply_cc_outcome(&mut self, text: String, usage: Usage) {
+        self.chat.push(ChatMessage::assistant(text));
         self.session_usage.add(usage);
     }
 

@@ -16,9 +16,15 @@ pub mod agent;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod keychain;
 
+// Backend agenta przez lokalny Claude Code (subskrypcja) — proces potomny, tylko natywnie.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod claude_code;
+
 // Zrzut banków z fizycznego urządzenia + rejestr packów — tylko natywnie.
 #[cfg(not(target_arch = "wasm32"))]
+pub mod bridge;
 pub mod device;
+pub mod settings;
 pub mod drum;
 pub mod sources;
 

@@ -17,7 +17,19 @@ use rmcp::{
 use mg101_commands::Kind;
 use mg101_core::{DeviceProfile, EffectCatalog};
 
-use crate::{dispatch, tool_list, McpError, McpTool};
+use crate::bridge_client::BridgeClient;
+use crate::{dispatch, tool_list_for, McpError, McpTool};
+use mg101_commands::Variant;
+
+/// Tryb pracy serwera.
+#[derive(Clone)]
+enum Mode {
+    /// Edycja PLIKÓW `.mg101patch` (`input` → `output`). Aplikacja NIE widzi zmian.
+    File,
+    /// Most do DZIAŁAJĄCEJ aplikacji: narzędzia idą na żywe `Studio`, więc zmiany
+    /// widać w UI natychmiast, a agent ma Bibliotekę, zaznaczenie i urządzenie.
+    Bridge(Arc<BridgeClient>),
+}
 
 /// Serwer MCP: profil + katalog urządzenia (wstrzykiwane przez pack — bez wiedzy
 /// o MG-101 w kodzie).
@@ -25,13 +37,36 @@ use crate::{dispatch, tool_list, McpError, McpTool};
 pub struct McpServer {
     profile: Arc<DeviceProfile>,
     catalog: Arc<EffectCatalog>,
+    mode: Mode,
 }
 
 impl McpServer {
+    /// Tryb plikowy (domyślny).
     pub fn new(profile: DeviceProfile, catalog: EffectCatalog) -> Self {
         Self {
             profile: Arc::new(profile),
             catalog: Arc::new(catalog),
+            mode: Mode::File,
+        }
+    }
+
+    /// Tryb mostkowy — wymaga działającej aplikacji z włączonym mostkiem.
+    pub fn bridged(
+        profile: DeviceProfile,
+        catalog: EffectCatalog,
+        client: BridgeClient,
+    ) -> Self {
+        Self {
+            profile: Arc::new(profile),
+            catalog: Arc::new(catalog),
+            mode: Mode::Bridge(Arc::new(client)),
+        }
+    }
+
+    fn variant(&self) -> Variant {
+        match self.mode {
+            Mode::File => Variant::File,
+            Mode::Bridge(_) => Variant::Library,
         }
     }
 }
@@ -60,17 +95,26 @@ impl ServerHandler for McpServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: "mg101-mcp".into(),
-                title: Some("NUX MG-101 Studio (pliki)".into()),
+                title: Some(match self.mode {
+                    Mode::File => "NUX MG-101 Studio (pliki)".into(),
+                    Mode::Bridge(_) => "NUX MG-101 Studio (żywa aplikacja)".to_string(),
+                }),
                 version: env!("CARGO_PKG_VERSION").into(),
                 icons: None,
                 website_url: None,
             },
-            instructions: Some(
-                "Edycja plików .mg101patch: każde narzędzie mutujące czyta `input` i \
-                 zapisuje `output` (nie nadpisuje istniejącego). `inspect_patch` \
-                 odczytuje plik, `list_models`/`get_profile` opisują urządzenie."
-                    .into(),
-            ),
+            instructions: Some(match self.mode {
+                Mode::File => "Edycja plików .mg101patch: każde narzędzie mutujące czyta `input` i \
+                     zapisuje `output` (nie nadpisuje istniejącego). `inspect_patch` \
+                     odczytuje plik, `list_models`/`get_profile` opisują urządzenie. \
+                     UWAGA: zmiany NIE są widoczne w działającej aplikacji."
+                    .to_string(),
+                Mode::Bridge(_) => "Edycja ŻYWEJ Biblioteki działającej aplikacji MG101 Studio — \
+                     zmiany widać w UI natychmiast. Operuj na `patchID` i `expectedRevision` \
+                     (rewizję bierz z `list_patches`/`get_patch`). Dostępne też zaznaczenie w GUI \
+                     (`get_selection`, `select_patch`) i sterowanie urządzeniem na żywo (drum_*)."
+                    .to_string(),
+            }),
         }
     }
 
@@ -80,7 +124,10 @@ impl ServerHandler for McpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, RmcpError> {
         Ok(ListToolsResult::with_all_items(
-            tool_list().into_iter().map(to_tool).collect(),
+            tool_list_for(self.variant())
+                .into_iter()
+                .map(to_tool)
+                .collect(),
         ))
     }
 
@@ -90,6 +137,15 @@ impl ServerHandler for McpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, RmcpError> {
         let args = req.arguments.unwrap_or_default();
+        // Tryb mostkowy: narzędzie wykonuje APLIKACJA na swoim żywym Studio.
+        if let Mode::Bridge(client) = &self.mode {
+            return Ok(match client.call(&req.name, &args) {
+                Ok(v) => CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string()),
+                )]),
+                Err(e) => CallToolResult::error(vec![Content::text(e)]),
+            });
+        }
         match dispatch(&self.profile, &self.catalog, &req.name, &args) {
             Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
             // Nieznane narzędzie / zły argument to błąd protokołu (nie tool-error).

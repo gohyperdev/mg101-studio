@@ -239,7 +239,57 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         ("chat.role_assistant", "asystent", "assistant"),
         ("inspector.fields", "pól", "fields"),
         ("agent.working", "Agent pracuje…", "Agent working…"),
+        ("settings.subscription", "subskrypcja", "subscription"),
+        (
+            "settings.cc_hint",
+            "Używa lokalnie zainstalowanego Claude Code — płaci Twoja subskrypcja, klucz API niepotrzebny. Wymaga włączonego mostka MCP (niżej), bo przez niego agent sięga do Biblioteki.",
+            "Uses your locally installed Claude Code — paid by your subscription, no API key needed. Requires the MCP bridge (below), which is how the agent reaches the Library.",
+        ),
+        ("settings.cc_bin", "Ścieżka do Claude Code", "Path to Claude Code"),
+        (
+            "settings.bridge",
+            "Mostek MCP — udostępnij żywą Bibliotekę klientom MCP",
+            "MCP bridge — expose the live Library to MCP clients",
+        ),
+        (
+            "settings.bridge_restart",
+            "Zmiana mostka zadziała po restarcie aplikacji.",
+            "The bridge change takes effect after restarting the app.",
+        ),
+        (
+            "settings.bridge_on",
+            "Mostek działa na 127.0.0.1 — klienci MCP edytują ŻYWĄ Bibliotekę (zmiany widać od razu). Token: ~/.mg101_bridge_token",
+            "Bridge running on 127.0.0.1 — MCP clients edit the LIVE Library (changes appear immediately). Token: ~/.mg101_bridge_token",
+        ),
+        (
+            "settings.bridge_off",
+            "Mostek wyłączony — klienci MCP widzą tylko pliki .mg101patch, nie działającą aplikację.",
+            "Bridge disabled — MCP clients only see .mg101patch files, not the running app.",
+        ),
         ("agent.tool", "narzędzie:", "tool:"),
+        ("mcp.connected", "Podłączony agent zewnętrzny", "External agent connected"),
+        ("mcp.idle", "Mostek aktywny — brak połączeń", "Bridge active — no clients"),
+        ("mcp.off", "Mostek wyłączony", "Bridge off"),
+        (
+            "mcp.off_hint",
+            "Włącz mostek w Ustawieniach, żeby zewnętrzny agent (np. Claude Code) mógł edytować tę Bibliotekę.",
+            "Enable the bridge in Settings so an external agent (e.g. Claude Code) can edit this Library.",
+        ),
+        ("mcp.requests", "żądania:", "requests:"),
+        ("mcp.rejected", "odrzucone (zły token):", "rejected (bad token):"),
+        ("mcp.last", "ostatnie:", "last:"),
+        ("mcp.ago", "s temu", "s ago"),
+        (
+            "mcp.hint",
+            "Podłącz zewnętrznego agenta (narzędzia działają na TEJ uruchomionej aplikacji):",
+            "Connect an external agent (tools act on THIS running app):",
+        ),
+
+        (
+            "agent.cc_needs_bridge",
+            "Backend Claude Code wymaga mostka MCP — włącz go w Ustawieniach.",
+            "The Claude Code backend requires the MCP bridge — enable it in Settings.",
+        ),
     ];
     for (k, pl, en) in TABLE {
         if *k == key {
@@ -295,7 +345,9 @@ mod tests {
             "meta.ph_tag", "meta.ph_collection",
             "inspector.sources", "sources.intro", "sources.paid", "sources.author",
             "sources.license", "sources.open",
-            "agent.working", "agent.tool",
+            "agent.working", "agent.tool", "agent.cc_needs_bridge",
+            "mcp.connected", "mcp.idle", "mcp.off", "mcp.off_hint", "mcp.requests",
+            "mcp.rejected", "mcp.last", "mcp.ago", "mcp.hint",
         ];
         for key in KEYS {
             let pl = tr(Lang::Pl, key);

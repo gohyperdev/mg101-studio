@@ -203,13 +203,28 @@ export component AppWindow inherits Window {
     in property <[ChatRowUi]> chat-rows;
     in property <bool> agent-busy;
     in property <string> agent-status;   // np. „Agent pracuje… 12 s · narzędzie: list_patches"
+
+    // Zakładka MCP: stan mostka i zewnętrznych agentów (Claude Code i inni klienci).
+    in property <bool> mcp-bridge-on;
+    in property <int> mcp-clients;       // ilu klientów trzyma połączenie TERAZ
+    in property <string> mcp-status;     // nagłówek (podłączony / bezczynny / wyłączony)
+    in property <string> mcp-detail;     // adres, licznik żądań, ostatnie narzędzie
+    in property <string> mcp-cmd;        // gotowe polecenie/konfiguracja do podpięcia klienta
+    in property <string> t-mcp-hint;
     in property <string> usage-text;
 
     // Ustawienia AI
     in property <int> provider-index;      // 0=Anthropic 1=OpenAI-compatible
-    in property <string> cfg-endpoint;
-    in property <string> cfg-model;
-    in property <string> cfg-key;
+    in-out property <string> cfg-endpoint;
+    in-out property <string> cfg-model;
+    in-out property <string> cfg-key;
+    in-out property <string> cfg-claude-bin;     // ścieżka do binarki Claude Code
+    in property <bool> cfg-bridge;           // mostek MCP → żywe Studio
+    in property <string> cfg-bridge-status;  // np. „Mostek działa: 127.0.0.1:10101"
+    in property <string> t-subscription;
+    in property <string> t-cc-hint;
+    in property <string> t-cc-bin;
+    in property <string> t-bridge;
 
     // --- Etykiety (i18n z Rust) ---
     in property <string> t-app-title;
@@ -275,7 +290,7 @@ export component AppWindow inherits Window {
     callback revert();
     callback dismiss-error();
     callback send-message(string);                     // treść wiadomości do agenta
-    callback save-settings(int, string, string, string); // provider, endpoint, model, key
+    callback save-settings(int, string, string, string, bool, string); // backend, endpoint, model, key, mostek, ścieżka claude
     callback connect-dump();                           // W2: połącz i zrzuć banki
     callback import-dump();                             // W2: import zrzutu do Biblioteki
     callback open-slot(string, int);                   // W2: otwórz slot (bank, index) w edytorze
@@ -991,8 +1006,58 @@ export component AppWindow inherits Window {
                     }
                 if root.right-tab == 3: VerticalLayout {
                     vertical-stretch: 1;
-                        Text { text: "stdio: mg101-mcp"; color: #8a8a96; wrap: word-wrap; }
+                    VerticalBox {
+                        padding: 6px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        // Kropka + nagłówek: czy zewnętrzny agent JEST podłączony.
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Rectangle {
+                                width: 10px;
+                                height: 10px;
+                                border-radius: 5px;
+                                y: 4px;
+                                background: root.mcp-clients > 0 ? #3ecf6b
+                                    : (root.mcp-bridge-on ? #d8a033 : #6a6a76);
+                            }
+                            Text {
+                                text: root.mcp-status;
+                                color: #e6e6ea;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        Text {
+                            text: root.mcp-detail;
+                            color: #8a8a96;
+                            wrap: word-wrap;
+                        }
+
+                        Rectangle { height: 1px; background: #2a2a33; }
+
+                        Text { text: root.t-mcp-hint; color: #8a8a96; wrap: word-wrap; }
+                        Rectangle {
+                            background: #16161c;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #2a2a33;
+                            VerticalLayout {
+                                padding: 8px;
+                                Text {
+                                    text: root.mcp-cmd;
+                                    color: #cfcfd6;
+                                    font-family: "Menlo";
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                     }
+                }
                 if root.right-tab == 4: VerticalLayout {
                     vertical-stretch: 1;
                         VerticalBox {
@@ -1279,26 +1344,64 @@ export component AppWindow inherits Window {
                     }
                 if root.right-tab == 8: VerticalLayout {
                     vertical-stretch: 1;
-                        VerticalBox {
+                        ScrollView {
+                          VerticalBox {
                             padding: 6px;
                             spacing: 6px;
+                            alignment: start;
                             Text { text: root.t-provider; color: #8a8a96; font-size: 11px; }
+                            // Backend 2 = Claude Code: płaci SUBSKRYPCJA, klucz API zbędny.
                             provider-combo := ComboBox {
-                                model: ["Anthropic", "OpenAI-compatible"];
+                                model: ["Anthropic API", "OpenAI-compatible", "Claude Code (" + root.t-subscription + ")"];
                                 current-index: root.provider-index;
                             }
-                            Text { text: root.t-endpoint; color: #8a8a96; font-size: 11px; }
-                            endpoint-edit := LineEdit { text: root.cfg-endpoint; }
-                            Text { text: root.t-model; color: #8a8a96; font-size: 11px; }
-                            model-edit := LineEdit { text: root.cfg-model; }
-                            Text { text: root.t-key; color: #8a8a96; font-size: 11px; }
-                            key-edit := LineEdit { text: root.cfg-key; input-type: password; }
+                            // Endpoint/model/klucz mają sens tylko dla backendów HTTP.
+                            if provider-combo.current-index != 2: VerticalBox {
+                                padding: 0px; spacing: 6px;
+                                Text { text: root.t-endpoint; color: #8a8a96; font-size: 11px; }
+                                endpoint-edit := LineEdit { text: root.cfg-endpoint; edited => { root.cfg-endpoint = self.text; } }
+                                Text { text: root.t-model; color: #8a8a96; font-size: 11px; }
+                                model-edit := LineEdit { text: root.cfg-model; edited => { root.cfg-model = self.text; } }
+                                Text { text: root.t-key; color: #8a8a96; font-size: 11px; }
+                                key-edit := LineEdit { text: root.cfg-key; input-type: password; edited => { root.cfg-key = self.text; } }
+                            }
+                            if provider-combo.current-index == 2: VerticalBox {
+                                padding: 0px; spacing: 4px;
+                                Text {
+                                    text: root.t-cc-hint;
+                                    color: #9bd99b; font-size: 11px; wrap: word-wrap;
+                                }
+                                Text { text: root.t-cc-bin; color: #8a8a96; font-size: 11px; }
+                                claude-bin-edit := LineEdit {
+                                    text: root.cfg-claude-bin;
+                                    placeholder-text: "claude";
+                                    edited => { root.cfg-claude-bin = self.text; }
+                                }
+                            }
+                            // Mostek MCP: bez niego Claude Code nie ma czym edytować
+                            // Biblioteki, a zewnętrzne klienty MCP widzą tylko pliki.
+                            Rectangle { height: 1px; background: #3a3a44; }
+                            bridge-check := CheckBox {
+                                text: root.t-bridge;
+                                checked: root.cfg-bridge;
+                            }
+                            Text {
+                                text: root.cfg-bridge-status;
+                                color: #8a8a96; font-size: 10px; wrap: word-wrap;
+                            }
                             Button {
                                 text: root.t-save;
                                 clicked => {
-                                    root.save-settings(provider-combo.current-index, endpoint-edit.text, model-edit.text, key-edit.text);
+                                    root.save-settings(
+                                        provider-combo.current-index,
+                                        root.cfg-endpoint,
+                                        root.cfg-model,
+                                        root.cfg-key,
+                                        bridge-check.checked,
+                                        root.cfg-claude-bin);
                                 }
                             }
+                          }
                         }
                     }
                 }
