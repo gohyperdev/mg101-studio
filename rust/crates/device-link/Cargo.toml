@@ -3,6 +3,13 @@ name = "mg101-device-link"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Warstwa łącza MIDI/SysEx do fizycznego urządzenia."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Transport MIDI/SysEx cross-platform. Warstwa reasemblacji jest czysta
 # (bez zależności sprzętowych) i testowalna; backendy midir (E2) / WebMIDI (web)

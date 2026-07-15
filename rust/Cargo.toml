@@ -22,6 +22,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/gohyperdev/mg101-studio"
+homepage = "https://github.com/gohyperdev/mg101-studio"
+authors = ["Maciek Ostaszewski"]
+rust-version = "1.87"
+keywords = ["midi", "nux", "mg-101", "guitar", "sysex"]
+categories = ["multimedia::audio"]
 
 [workspace.dependencies]
 # Wspólne wersje zależności — dokładane w kolejnych epikach (serde, midir,

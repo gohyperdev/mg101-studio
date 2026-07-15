@@ -3,6 +3,13 @@ name = "mg101-commands"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Magistrala komend MG101 Studio — jedno źródło narzędzi dla UI, agenta i MCP."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Magistrala komend — jeden rejestr operacji domenowych dla UI (Slint), agenta
 # (tool-calling), MCP i przyszłego weba (ADR-0002, HLD §2). Port DomainCommand v1.

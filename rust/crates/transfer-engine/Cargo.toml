@@ -3,6 +3,13 @@ name = "mg101-transfer-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Silnik transferu biblioteka<->urządzenie (generyczny, multi-device)."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Silnik transferu Biblioteka<->urzadzenie: push/pull/sync, transfer grupowy, limity, WAL (HLD sekcja 5). E5.
 [dependencies]

@@ -3,6 +3,13 @@ name = "mg101-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Aplikacja desktop MG101 Studio (Slint) — biblioteka, edytor, agent AI, mostek MCP."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Powloka desktop (macOS + Windows) — UI w Slint (natywny Rust), wywolania rdzenia
 # natywnie. E7: warstwa VM/i18n (testowalna, bez Slint) + binarka Slint.

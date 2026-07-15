@@ -3,6 +3,13 @@ name = "mg101-agent-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Rdzeń agenta AI: rejestr narzędzi, sesje, klient LLM (device-agnostic)."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Rdzen agentowy: petla tool-calling, providerzy Anthropic/OpenAI, autoryzacje, sesje, liczenie kosztu (ADR-0001). E6.
 [dependencies]

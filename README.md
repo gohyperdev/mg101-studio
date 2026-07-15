@@ -1,197 +1,141 @@
 # MG101 Studio
 
-> **Aktywna implementacja: `rust/`** — projekt został przepisany ze Swifta na
-> Rust (workspace Cargo, 11 crate'ów: rdzeń device-agnostyczny, biblioteka,
-> transfer, agent, serwer MCP rmcp, desktop Slint na macOS+Windows, rdzeń gotowy
-> na WASM). Wersja Swift 1.x została **zarchiwizowana** w
-> [`archive/swift-v1/`](archive/swift-v1/) (referencja, nie rozwijana). Format
-> pliku `.mg101patch` jest w pełni kompatybilny — kodek Rust jest bezstratny
-> bit-w-bit (bramka round-trip 36/36, 0 różnic). Build i testy: `cd rust && cargo
-> test`. Szczegóły architektury: `docs/architecture/`, `docs/adr/`.
+A native desktop editor for the **NUX MG-101** guitar multi-effects processor.
+Edit patches safely on your computer: browse a library, tweak amp/cab/effect
+models and parameters, sync with the device over MIDI, and — optionally — drive
+edits with an AI agent. The editor, the writer, and the MCP server all share one
+device profile and one command bus, so every path applies the same validation.
 
-Poniższy opis dotyczy zachowania produktu (parytet utrzymany w wersji Rust).
+> **Status:** active implementation is the Rust workspace under [`rust/`](rust/).
+> The original Swift 1.x app is archived under
+> [`archive/swift-v1/`](archive/swift-v1/) for reference and is no longer
+> developed. The `.mg101patch` file format is fully supported — the codec is
+> lossless byte-for-byte.
 
-Natywna aplikacja do bezpiecznej edycji plików NUX MG-101. Interfejs, writer i
-serwer MCP korzystają z tego samego profilu urządzenia. Nieznane bajty pozostają
-bez zmian, a eksport zawsze tworzy nowy plik.
+Not affiliated with or endorsed by NUX / Cherub Technology. "NUX" and "MG-101"
+are trademarks of their respective owners; used here only to describe
+compatibility.
 
-## Zakres wersji 1.2
+## Highlights
 
-- biblioteka bez limitu 36 pozycji, startująca z 36 fabrycznymi patchami;
-- trwałe przechowywanie zaimportowanych i edytowanych patchy w Application Support;
-- wielokrotny import pojedynczych plików `.mg101patch`;
-- import kompletnego zestawu QuickTone: 302472 bajty, 36 rekordów;
-- eksport pojedynczego patcha oraz wybierany eksport dokładnie 36 patchy do zestawu;
-- odczyt i eksport rekordów `.mg101patch` o długości 8402 bajtów;
-- edycja nazwy, BPM, send/return, bypassów, modeli i parametrów;
-- model-aware writer z walidacją zakresów i zerowaniem nieaktywnych parametrów;
-- osadzanie i usuwanie lokalnego IR w formacie urządzenia;
-- podgląd różnic bajtowych oraz undo/redo;
-- podgląd binarny w układzie offset + hex + ASCII, z zaznaczeniem zmienionych wierszy;
-- wymienny profil JSON bez ponownej kompilacji aplikacji;
-- agent AI w aplikacji: plan zmian, walidacja, podgląd i jawne zatwierdzenie;
-- serwer MCP oparty o oficjalny Swift SDK, uruchamiany przez stdio.
+- **Patch library** — persistent SQLite store with revisions, undo, tags,
+  ratings, notes, and collections. On first launch it seeds a few generic
+  starter presets (see *Seed data* below).
+- **Model-aware editor** — name, BPM, send/return, bypasses, models, and
+  parameters, validated against the device's effect catalog; inactive parameters
+  are zeroed on model change.
+- **Lossless codec** — unknown bytes are preserved exactly; export always writes
+  a new file and never overwrites in place.
+- **Binary view** — logical (grouped fields) and raw (offset + hex + ASCII)
+  layouts with changed ranges highlighted; hex/decimal toggle.
+- **Device sync (MIDI/SysEx)** — read the device state, follow its notifications
+  (patch change, tempo, expression), and send controlled writes.
+- **DRUM control** — pick a rhythm pattern via a two-level group→pattern menu,
+  start/stop, set volume and tempo live.
+- **AI agent** — in-app assistant that edits patches through the same typed
+  commands. Three backends (see *AI backends*).
+- **MCP server** — expose the same tools to external agents over stdio, either
+  editing files or bridging to the **live running app**.
 
-Aplikacja pracuje na plikach. Wersja 1.2 nie komunikuje się bezpośrednio z
-urządzeniem przez USB; import i eksport do urządzenia wykonuje QuickTone.
+## Architecture
 
-## Biblioteka i zestawy patchy
+The core is **device-agnostic**: `mg101-core` knows nothing about the MG-101
+specifically — a *Device Pack* (`mg101-pack-nux-mg101`) supplies the device
+profile and effect catalog as **data** (JSON), so new devices are packs, not
+forks. All state changes flow through a single command bus
+(`Studio::execute(&Command)`), shared by the UI (Slint), the AI agent, and the
+MCP server. See [`docs/adr/`](docs/adr/) and
+[`docs/architecture/`](docs/architecture/).
 
-Lewy panel zawiera bibliotekę patchy i nie ma limitu 36 pozycji. Przy pierwszym
-uruchomieniu dostępnych jest 36 fabrycznych konfiguracji z potwierdzonego
-zestawu MG-101. Importowane patche są przechowywane w:
+The workspace is ~11 crates: `core`, `device-pack-api`, `device-link`,
+`pack-nux-mg101`, `commands`, `library`, `transfer-engine`, `studio`,
+`agent-core`, `mcp`, `desktop`. The core builds to `wasm32`.
 
-```text
-~/Library/Application Support/MG101Studio/PatchLibrary/
-```
-
-Widoczne przyciski pod biblioteką obsługują:
-
-- **Import Files** — wybór jednego lub wielu plików; pojedynczy patch i pełny
-  zestaw są rozpoznawane po rozmiarze;
-- **Import Set** — import jednego pełnego pliku 36-patchowego;
-- **Export Patch** — eksport aktualnie wybranego patcha;
-- **Export Set** — panel wyboru dokładnie 36 pozycji z całej biblioteki.
-
-QuickTone przyjmuje zestaw o rozmiarze dokładnie 302472 bajtów. Eksporter bierze
-wybrane patche w kolejności biblioteki, ustawia im indeksy slotów 0–35 i łączy
-36 rekordów po 8402 bajty. Plik wynikowy ma nazwę
-`MG101AllPatch.mg101patch`.
-
-Zakładka **Binary** ma dwa tryby:
-
-- **Logical** — pola pogrupowane jako nagłówek patcha, pola globalne, bloki,
-  aktywne parametry modelu i lokalny IR;
-- **Raw** — cały rekord w wierszach po 16 bajtów: offset, wartości i ASCII.
-
-Przełącznik **Hex / Decimal** zmienia sposób prezentacji offsetów i wartości
-liczbowych w obu trybach. Zakresy zawierające zmiany względem wersji bazowej są
-wyróżnione.
-
-## Budowanie (Rust — aktywna implementacja)
+## Build and run
 
 ```sh
 cd rust
-cargo build --workspace          # rdzeń + biblioteka + agent + MCP + desktop
-cargo run -p mg101-desktop       # aplikacja desktop (Slint)
-cargo run -p mg101-mcp           # serwer MCP po stdio (rmcp)
+cargo build --workspace
+cargo run -p mg101-desktop        # desktop app (Slint)
+cargo run -p mg101-mcp            # MCP server over stdio (rmcp)
 ```
 
-Bramka jakości (jak w CI, macOS + Windows):
+Quality gates (same as CI, on macOS + Windows):
 
 ```sh
-cd rust
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
+cargo fmt --all -- --check
 ```
 
-<details><summary>Archiwalny build Swift v1 (zarchiwizowany, nie rozwijany)</summary>
+## AI backends
 
-```sh
-cd archive/swift-v1
-swift test
-scripts/build-app.sh
-open dist/MG101Studio.app
-```
+Configure in **Settings**. All three go through the same command bus; the API
+key (when needed) lives only in the OS keychain, never in a config file.
 
-Skrypt buduje oba programy dla `arm64`, tworzy pakiet `.app`, wykonuje podpis
-ad-hoc i sprawdza podpis.
-
-</details>
-
-## Konfiguracja profilu
-
-Profil składa się z dwóch plików:
-
-- `device-profile.json` — rozmiar rekordu, bloki, selektory, okna parametrów,
-  BPM i pola nazwane;
-- `effects-catalog.json` — modele, parametry aktywne dla modelu, offsety i
-  dozwolone zakresy.
-
-Wybierz **Profile → Import Profile Folder…** i wskaż katalog zawierający oba
-pliki. Aplikacja waliduje wersję schematu, rozmiar rekordu, offsety, unikalność
-bloków i modeli oraz zakresy parametrów. Dopiero poprawny profil jest kopiowany
-do:
-
-```text
-~/Library/Application Support/MG101Studio/Profiles/active/
-```
-
-Ten sam aktywny profil ładuje GUI i `MG101MCP`. Polecenie **Use Bundled
-Profile** usuwa override i wraca do profilu dostarczonego z aplikacją. Zmiana
-profilu zamyka bieżący dokument, aby nie interpretować jednego pliku dwiema
-mapami.
-
-## Agent AI w aplikacji
-
-Konfigurację otwiera się przez **MG101 Studio → Settings… → AI Providers** albo
-przycisk **Configure AI providers…** w zakładce **Agent**. Można wybrać:
-
-- **Anthropic** — natywne Messages API, domyślny endpoint
-  `https://api.anthropic.com/v1/messages`;
-- **OpenAI-compatible** — Chat Completions, domyślny endpoint
-  `https://api.openai.com/v1/chat/completions`; obsługuje również lokalne
-  serwery i bramki zgodne z tym formatem.
-
-Dla każdego dostawcy konfiguruje się osobno endpoint, model i klucz API.
-Endpointy, modele oraz wybrany dostawca są zapisane w `UserDefaults`. Klucze API
-są zapisane jako hasła ogólne w macOS Keychain pod usługą
-`dev.mos.mg101studio.ai`; nie trafiają do plików konfiguracyjnych ani
-`UserDefaults`.
-
-Integracja Anthropic wysyła `POST /v1/messages`, nagłówek `x-api-key` oraz
-`anthropic-version: 2023-06-01`. Model otrzymuje bieżący stan patcha oraz
-aktualny katalog i może zaproponować operacje:
-
-- `set_name`, `set_bpm`, `set_named_field`;
-- `set_bypass`, `set_model`, `set_parameter`.
-
-Odpowiedź modelu nie modyfikuje pliku bezpośrednio. Jest dekodowana do typowanych
-operacji, walidowana przez core i wyświetlana do zatwierdzenia. Bez
-skonfigurowanego endpointu działa prosty lokalny planner dla nazwy, BPM i
-bypassów.
+- **Anthropic** — native Messages API. Requires an API key.
+- **OpenAI-compatible** — any Chat Completions endpoint, including local servers
+  (Ollama, LM Studio). Requires the endpoint + model.
+- **Claude Code (subscription)** — drives a locally installed `claude -p`; your
+  Claude subscription pays, no API key needed. Tools reach the app through the
+  MCP bridge (below). Permissions are scoped to `mcp__mg101` — no shell, no file
+  access.
 
 ## MCP
 
-Konfiguracja klienta MCP:
+The MCP server runs over stdio and has two modes:
 
-```json
-{
-  "mcpServers": {
-    "mg101-studio": {
-      "command": "/pełna/ścieżka/MG101Studio.app/Contents/MacOS/MG101MCP"
-    }
-  }
-}
-```
+- `--file` — edits `.mg101patch` files (`input` → `output`); the running app
+  does **not** see these changes.
+- `--bridge` — tools act on the **live library** of the running app, so edits
+  appear in the UI immediately. Listens only on `127.0.0.1`, behind a token in
+  `~/.mg101_bridge_token` (mode `0600`). Enable the bridge in Settings.
+- no flag (`--auto`, default) — bridge if the app is running, else files.
 
-Dostępne narzędzia:
-
-- `inspect_patch`, `list_models`;
-- `set_parameter`, `set_bypass`, `set_model`;
-- `set_bpm`, `set_name`, `set_named_field`;
-- `set_ir`, `clear_ir`.
-
-Każda operacja zapisująca wymaga osobnej ścieżki wejściowej i wyjściowej.
-Istniejący plik nigdy nie jest nadpisywany. Zapis odbywa się przez plik
-tymczasowy i atomowe przeniesienie do nowej ścieżki.
-
-## Weryfikacja
+Register it with a client, e.g.:
 
 ```sh
-cd rust
-cargo test --workspace           # 178 testów (rdzeń, biblioteka, transfer, agent, MCP, desktop)
-cargo run -p mg101-pack-nux-mg101 --example roundtrip_proof   # round-trip 1:1 36/36, 0 różnic
+claude mcp add mg101 -- /path/to/mg101-mcp --bridge
 ```
 
-Smoke MCP: uruchom `cargo run -p mg101-mcp` i wykonaj sesję JSON-RPC po stdio
-(initialize → tools/list → tools/call). Serwer neguje protokół, listuje narzędzia
-wariantu plikowego i tworzy kopię patcha bez modyfikacji pliku źródłowego
-(idempotentna odmowa nadpisania).
+Tools include the full library variant in bridge mode: `list_patches`,
+`get_patch`, `get_selection`, `set_model`, `set_parameter`, `set_bpm`,
+`set_name`, `set_bypass`, `set_ir`/`clear_ir`, metadata/collection tools, and
+DRUM controls. In file mode, `inspect_patch` reads a record to JSON, and every
+mutating tool requires a separate input and output path (never overwrites).
 
-## Status projektu
+## Seed data and factory patches
 
-Projekt jest nieoficjalny i nie jest powiązany z Cherub Technology ani marką
-NUX. Nazwy produktów i znaków towarowych należą do ich właścicieli. Przed
-importem do urządzenia zachowaj kopię oryginalnego zestawu patchy.
+MG101 Studio does **not** ship the manufacturer's factory patches — those are
+NUX's property, and you pull them from your own device. On first launch the
+library is seeded with a handful of **generic, synthetic presets** generated
+from the device profile (structurally valid 8402-byte records, no proprietary
+data). Edit or delete them freely.
+
+## Device profile
+
+A pack is two JSON files: `device-profile.json` (record size, blocks, selectors,
+parameter windows, BPM, named fields) and `effects-catalog.json` (models,
+active parameters, offsets, allowed ranges). The bundled MG-101 pack lives in
+`rust/crates/pack-nux-mg101/resources/`.
+
+## Testing the codec against real hardware
+
+The default suite proves the codec's lossless round-trip on synthetic data, so
+it needs no proprietary files. Fidelity tests against a real NUX factory dump
+(36/36 byte-exact, the wire decoder, golden decoded values) are gated behind an
+off-by-default feature. If you own the device and want to run them, drop your
+local dumps into `rust/crates/pack-nux-mg101/oracle/` (git-ignored) and:
+
+```sh
+cargo test -p mg101-pack-nux-mg101 --features hardware-oracle
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please don't commit factory patch dumps
+or other manufacturer-owned data.
+
+## License
+
+[MIT](LICENSE) © 2026 Maciek Ostaszewski.

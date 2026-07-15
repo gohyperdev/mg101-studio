@@ -3,6 +3,13 @@ name = "mg101-studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Silnik stanu MG101 Studio: wykonanie komend na bibliotece i urządzeniu."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Warstwa aplikacyjna: wykonawca komend (port StudioState + GUIToolExecutor).
 # Spina rejestr komend (E3) z edycją kanoniczną (core) i składem biblioteki (E4).

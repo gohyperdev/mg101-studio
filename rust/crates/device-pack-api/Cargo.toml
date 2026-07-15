@@ -3,6 +3,13 @@ name = "mg101-device-pack-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Kontrakt Device Pack: profil + katalog jako dane, bez rekompilacji rdzenia."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Kontrakt Device Packa: generyczna topologia pamięci (banki/sloty/limity)
 # oraz traity protokołu. Silnik biblioteki i transferu zależą WYŁĄCZNIE od tych

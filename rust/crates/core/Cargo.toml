@@ -3,6 +3,13 @@ name = "mg101-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Rdzeń device-agnostic: model kanoniczny patcha, profil urządzenia, kodek świętych bajtów."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Model kanoniczny (patch → bloki → aktywny model → parametry z zakresami,
 # pola globalne, załączniki IR) + rewizje/WAL/diff. Pisane raz, przeciw modelowi

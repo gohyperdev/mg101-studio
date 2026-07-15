@@ -3,6 +3,13 @@ name = "mg101-pack-nux-mg101"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Device Pack NUX MG-101: profil, katalog efektów, kodek .mg101patch, protokół SysEx."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Device Pack MG-101: profile (dane) + codec (189B rekord <-> kanonik <-> .mg101patch) + protocol (SysEx). Round-trip 1:1 w E1/E2.
 [dependencies]

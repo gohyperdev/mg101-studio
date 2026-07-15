@@ -3,6 +3,13 @@ name = "mg101-library"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Trwała biblioteka patchy (SQLite): rewizje, WAL, metadane, kolekcje."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Biblioteka patchy: store, tagi, grupy, fingerprint, provenance, stan trojdrozny
 # (HLD sekcje 3-4). E4. Device-agnostyczna: zna tylko blob (bajty święte) + hashe

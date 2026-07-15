@@ -3,6 +3,13 @@ name = "mg101-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Serwer MCP (rmcp) dla MG101 Studio — tryb plikowy i mostek do żywej aplikacji."
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 
 # Serwer MCP (rmcp) po stdio: narzędzia wariantu File z rejestru komend (E3),
 # executor plikowy (studio::file_ops) — port archive/swift-v1/Sources/MG101MCP. E6.3.
