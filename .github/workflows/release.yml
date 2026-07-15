@@ -1,0 +1,140 @@
+name: release
+
+# Buduje paczki desktop + MCP na macOS / Windows / Linux i publikuje je jako
+# GitHub Release. Uruchamiany tagiem `vX.Y.Z` (albo ręcznie — wtedy tylko build
+# artefaktów, bez publikacji release'u).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: MG101Studio-macos-arm64.dmg
+          - os: windows-latest
+            asset: MG101Studio-windows-x86_64.zip
+          - os: ubuntu-latest
+            asset: MG101Studio-linux-x86_64.tar.gz
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Zależności GUI (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libgtk-3-dev libxcb1-dev libxcb-render0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev \
+            libwayland-dev libgl1-mesa-dev
+
+      - name: Build release (desktop + MCP)
+        run: cargo build --release -p mg101-desktop -p mg101-mcp
+
+      # --- Pakowanie: macOS → .app w .dmg (ad-hoc podpis) ---
+      - name: Pakiet macOS (.dmg)
+        if: runner.os == 'macOS'
+        run: |
+          VER="${GITHUB_REF_NAME#v}"; [ "$VER" = "$GITHUB_REF_NAME" ] && VER="0.1.0"
+          APP="stage/MG101Studio.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/release/mg101-desktop "$APP/Contents/MacOS/MG101Studio"
+          cp target/release/mg101-mcp "$APP/Contents/MacOS/mg101-mcp"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>MG101Studio</string>
+            <key>CFBundleDisplayName</key><string>MG101 Studio</string>
+            <key>CFBundleIdentifier</key><string>dev.mos.mg101studio</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleExecutable</key><string>MG101Studio</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep --sign - "$APP" || true
+          cp ../README.md ../LICENSE stage/
+          hdiutil create -volname "MG101 Studio" -srcfolder stage -ov -format UDZO "${{ matrix.asset }}"
+
+      # --- Pakowanie: Windows → .zip ---
+      - name: Pakiet Windows (.zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item target/release/mg101-desktop.exe stage/MG101Studio.exe
+          Copy-Item target/release/mg101-mcp.exe stage/mg101-mcp.exe
+          Copy-Item ../README.md, ../LICENSE stage/
+          Compress-Archive -Path stage/* -DestinationPath "${{ matrix.asset }}" -Force
+
+      # --- Pakowanie: Linux → .tar.gz (+ plik .desktop) ---
+      - name: Pakiet Linux (.tar.gz)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p stage
+          cp target/release/mg101-desktop stage/MG101Studio
+          cp target/release/mg101-mcp stage/mg101-mcp
+          cp ../README.md ../LICENSE stage/
+          cat > stage/MG101Studio.desktop <<'DESK'
+          [Desktop Entry]
+          Type=Application
+          Name=MG101 Studio
+          Comment=Editor for the NUX MG-101 guitar processor
+          Exec=MG101Studio
+          Terminal=false
+          Categories=AudioVideo;Audio;
+          DESK
+          tar -C stage -czf "${{ matrix.asset }}" .
+
+      - name: Upload artefaktu
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: rust/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    # Publikacja tylko dla tagów — ręczne uruchomienie robi wyłącznie build.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pobierz artefakty
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Utwórz release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Paczki desktop + serwer MCP dla NUX MG-101 Studio.
+
+            | Platforma | Plik |
+            |-----------|------|
+            | macOS (Apple Silicon) | `MG101Studio-macos-arm64.dmg` |
+            | Windows (x86-64) | `MG101Studio-windows-x86_64.zip` |
+            | Linux (x86-64) | `MG101Studio-linux-x86_64.tar.gz` |
+
+            Paczki są **niepodpisane**. macOS: przy pierwszym uruchomieniu
+            kliknij prawym → *Open* (Gatekeeper). Windows: *More info →
+            Run anyway* (SmartScreen). Każda paczka zawiera aplikację desktop
+            i binarkę `mg101-mcp`.
