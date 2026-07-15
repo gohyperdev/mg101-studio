@@ -36,9 +36,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfontconfig1-dev libgtk-3-dev libxcb1-dev libxcb-render0-dev \
-            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev \
-            libwayland-dev libgl1-mesa-dev
+            libasound2-dev libfontconfig1-dev libgtk-3-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev
 
       - name: Build release (desktop + MCP)
         run: cargo build --release -p mg101-desktop -p mg101-mcp
