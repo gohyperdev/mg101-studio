@@ -5,8 +5,10 @@
 //! Protokół SysEx (odczyt/zapis na żywo) w module [`protocol`].
 
 pub mod protocol;
+pub mod seed;
 pub mod wire;
 pub use protocol::Mg101Protocol;
+pub use seed::{seed_count, seed_patches};
 
 use mg101_core::{DeviceProfile, EffectCatalog, ProfileError};
 
@@ -14,10 +16,6 @@ use mg101_core::{DeviceProfile, EffectCatalog, ProfileError};
 pub const PROFILE_JSON: &str = include_str!("../resources/device-profile.json");
 /// Katalog efektów (dane) — osadzony z pakietu.
 pub const CATALOG_JSON: &str = include_str!("../resources/effects-catalog.json");
-
-/// 36 patchy fabrycznych w formacie `.mg101patch` (zestaw urządzenia, 36×8402 B).
-/// Służy m.in. do zasiania pustej Biblioteki przy pierwszym starcie (parytet v1).
-pub const FACTORY_PATCHES: &[u8] = include_bytes!("../oracle/factory-patches.mg101patch");
 
 /// Rola crate'u (znacznik zgodności).
 pub const CRATE_ROLE: &str = "device-pack-nux-mg101";
@@ -59,6 +57,10 @@ mod tests {
     use super::*;
     use mg101_core::{CanonicalPatch, PatchRecord};
 
+    // Zrzut fabryczny NUX (36 rekordów) jest własnością producenta i NIE trafia
+    // do repozytorium. Testy wierności sprzętowej włącza się cechą
+    // `hardware-oracle` po wgraniu lokalnej kopii do `oracle/` (patrz README).
+    #[cfg(feature = "hardware-oracle")]
     const ORACLE: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/oracle/factory-patches.mg101patch"
@@ -66,6 +68,24 @@ mod tests {
 
     fn profile() -> DeviceProfile {
         load().expect("profil ładuje się i waliduje").0
+    }
+
+    /// Syntetyczny zestaw seedowy — dane testowe bez własności producenta.
+    /// Zastępuje oracle wszędzie, gdzie test potrzebuje tylko *poprawnego* rekordu,
+    /// a nie konkretnych wartości fabrycznych.
+    fn synthetic_set() -> Vec<u8> {
+        let (p, c) = load().unwrap();
+        seed_patches(&p, &c)
+    }
+
+    /// Pierwszy rekord seedu jako przykład rekordu do edycji.
+    fn sample_bytes() -> Vec<u8> {
+        let p = profile();
+        synthetic_set()
+            .chunks(p.record_size)
+            .next()
+            .unwrap()
+            .to_vec()
     }
 
     #[test]
@@ -126,7 +146,10 @@ mod tests {
         assert_eq!(six.parameters.len(), 6);
         assert_eq!(six.parameters[0].label(), "100 Hz");
         assert_eq!(six.parameters[5].label(), "6.4 kHz");
-        assert!(!six.parameters[0].is_confirmed(), "semantyka pasm = inferred");
+        assert!(
+            !six.parameters[0].is_confirmed(),
+            "semantyka pasm = inferred"
+        );
         let ten = c.model("eq", 2).expect("10-EQ");
         assert_eq!(ten.parameters.len(), 12);
         assert_eq!(ten.parameters[0].label(), "31 Hz");
@@ -153,7 +176,11 @@ mod tests {
         assert_eq!(pos.enum_next(1), 128, "PRECEDE → POSTERIOR");
         assert_eq!(pos.enum_next(128), 1, "POSTERIOR → PRECEDE (cykl)");
         // LEVEL: fizyczne dB (50 = 0 dB).
-        let lvl = pl.parameters.iter().find(|p| p.name == "patch_level").unwrap();
+        let lvl = pl
+            .parameters
+            .iter()
+            .find(|p| p.name == "patch_level")
+            .unwrap();
         assert_eq!(lvl.display_value(50).as_deref(), Some("+0.0 dB"));
     }
 
@@ -172,9 +199,14 @@ mod tests {
         assert_eq!(pos.enum_labels(), vec!["Edge", "Middle", "Center"]);
         assert_eq!(pos.enum_values(), vec![0, 1, 2]);
         assert_eq!(pos.enum_index(1), 1);
-        assert_eq!(pos.enum_index(144), -1, "nieznana wartość → -1 (pokaż surową)");
+        assert_eq!(
+            pos.enum_index(144),
+            -1,
+            "nieznana wartość → -1 (pokaż surową)"
+        );
     }
 
+    #[cfg(feature = "hardware-oracle")]
     #[test]
     fn oracle_splits_into_36_records() {
         let p = profile();
@@ -185,17 +217,21 @@ mod tests {
 
     #[test]
     fn container_roundtrip_is_byte_identical() {
-        // Kontener: split → concat odtwarza dokładnie oryginał.
+        // Kontener: split → concat odtwarza dokładnie oryginał (dane-agnostyczne,
+        // więc na seedzie syntetycznym).
         let p = profile();
-        let records = Container::split(ORACLE, p.record_size).unwrap();
+        let set = synthetic_set();
+        let records = Container::split(&set, p.record_size).unwrap();
         let rejoined: Vec<u8> = records.concat();
-        assert_eq!(rejoined.len(), ORACLE.len());
-        assert_eq!(rejoined, ORACLE);
+        assert_eq!(rejoined.len(), set.len());
+        assert_eq!(rejoined, set);
     }
 
+    #[cfg(feature = "hardware-oracle")]
     #[test]
     fn codec_roundtrip_1to1_all_36_records() {
-        // Bramka E1: decode → encode bajt-w-bajt na każdym z 36 rekordów.
+        // Bramka E1: decode → encode bajt-w-bajt na każdym z 36 rekordów FABRYCZNYCH
+        // (dowód wierności sprzętowej; wymaga lokalnego oracle).
         let p = profile();
         let records = Container::split(ORACLE, p.record_size).unwrap();
         let mut mismatches = 0usize;
@@ -214,7 +250,8 @@ mod tests {
     #[test]
     fn decoded_fields_are_sane() {
         let p = profile();
-        let records = Container::split(ORACLE, p.record_size).unwrap();
+        let set = synthetic_set();
+        let records = Container::split(&set, p.record_size).unwrap();
         for chunk in &records {
             let record = PatchRecord::new(chunk.to_vec(), &p).unwrap();
             // Nazwa dekoduje się jako poprawny UTF-8, BPM w zakresie 14-bit.
@@ -235,7 +272,9 @@ mod tests {
     // --- Wierność mutacji vs semantyka bajtowa Swift ---
 
     fn first_record(p: &DeviceProfile) -> PatchRecord<'_> {
-        let chunk = Container::split(ORACLE, p.record_size).unwrap()[0].to_vec();
+        let (_p, c) = load().unwrap();
+        let set = seed_patches(p, &c);
+        let chunk = Container::split(&set, p.record_size).unwrap()[0].to_vec();
         PatchRecord::new(chunk, p).unwrap()
     }
 
@@ -315,8 +354,10 @@ mod tests {
         }
     }
 
-    // --- Złote wartości: pinują offsety dekodowania do prawdy naziemnej ---
+    // --- Złote wartości: pinują offsety dekodowania do prawdy naziemnej.
+    //     Wymaga fabrycznego oracle (nazwy z zestawu NUX) → tylko z cechą. ---
 
+    #[cfg(feature = "hardware-oracle")]
     #[test]
     fn golden_decoded_values_pin_offsets() {
         let p = profile();
@@ -340,9 +381,10 @@ mod tests {
     #[test]
     fn codec_roundtrip_lossless_on_adversarial_bytes() {
         let p = profile();
-        let mut bytes = Container::split(ORACLE, p.record_size).unwrap()[0].to_vec();
+        let mut bytes = sample_bytes();
 
-        // Ogon nazwy: bajt po terminatorze "EuroLead"(8) w polu [109..125).
+        // Ogon nazwy: bajt po terminatorze w polu [109..125) — śmieć po zerze
+        // musi przetrwać round-trip (bezstratność „świętych bajtów").
         let name_start = p.patch_name.offset;
         bytes[name_start + 8] = 0; // terminator
         bytes[name_start + 10] = 0xAA; // śmieć po zerze

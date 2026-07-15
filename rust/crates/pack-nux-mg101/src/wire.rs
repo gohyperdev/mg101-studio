@@ -198,7 +198,11 @@ pub fn decode_name(payload: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).trim().to_string()
 }
 
-#[cfg(test)]
+// Cały moduł dowodzi zgodności dekodera wire z FABRYCZNYM zrzutem NUX (oracle +
+// hw-factory-wire.bin). Te dane są własnością producenta i nie ma ich w repo, więc
+// testy są za cechą `hardware-oracle` (patrz README) — włączają się po wgraniu
+// lokalnej kopii do `oracle/`.
+#[cfg(all(test, feature = "hardware-oracle"))]
 mod tests {
     use super::*;
     use crate::Container;
@@ -309,7 +313,10 @@ mod tests {
             let d = decode_slot(&wire[k]).unwrap();
             assert_eq!(d[0x5b], orecs[k][0x5b], "patch_max slot {k}");
             assert_eq!(d[0x5d], 128, "POSTERIOR=128 (fabryczny) slot {k}");
-            assert_eq!(d[0x5d], orecs[k][0x5d], "POSITION zgodny z plikiem slot {k}");
+            assert_eq!(
+                d[0x5d], orecs[k][0x5d],
+                "POSITION zgodny z plikiem slot {k}"
+            );
         }
     }
 }

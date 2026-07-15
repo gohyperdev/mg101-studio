@@ -5,7 +5,7 @@
 - Autor: Maciek Ostaszewski
 - Powiązane: [ADR-0002 (Rust core + Device Pack)](../adr/0002-rust-core-device-packs.md),
   [ADR-0001 (rejestr narzędzi, rewizje, WAL)](../adr/0001-agent-tool-registry.md),
-  [HLD platformy SaaS](hld-saas-platform.md)
+  HLD platformy SaaS (dokument wewnętrzny, poza publicznym repo)
 - Empiria sprzętowa: `nux/mg101-probe/docs/findings.md` (zdekodowany protokół
   MG-101: odczyt `SUB=00`, edycja live przez CC, zapis slotu `0B 01 <slot>`).
 

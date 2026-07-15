@@ -4,7 +4,6 @@
 - Data: 2026-07-05
 - Decydenci: Maciek Ostaszewski
 - Dokumenty powiązane: [ADR-0001](0001-agent-tool-registry.md),
-  [HLD platformy SaaS](../architecture/hld-saas-platform.md),
   [HLD integracji agentowej](../architecture/hld-agent-integration.md)
 
 ## Kontekst

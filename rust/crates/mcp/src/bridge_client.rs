@@ -28,8 +28,9 @@ impl BridgeClient {
     pub fn connect() -> Result<Self, String> {
         let (port, token) = discover()
             .ok_or("nie znaleziono mostka: uruchom MG101 Studio i włącz mostek w Ustawieniach")?;
-        let stream = TcpStream::connect(("127.0.0.1", port))
-            .map_err(|e| format!("mostek na porcie {port} nie odpowiada ({e}) — czy aplikacja działa?"))?;
+        let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
+            format!("mostek na porcie {port} nie odpowiada ({e}) — czy aplikacja działa?")
+        })?;
         Ok(Self {
             stream: Mutex::new(Some(stream)),
             port,
@@ -47,7 +48,10 @@ impl BridgeClient {
         let mut line = req.take().to_string();
         line.push('\n');
 
-        let mut guard = self.stream.lock().map_err(|_| "mostek zatruty".to_string())?;
+        let mut guard = self
+            .stream
+            .lock()
+            .map_err(|_| "mostek zatruty".to_string())?;
         let stream = guard.as_mut().ok_or("mostek rozłączony")?;
 
         stream
@@ -59,7 +63,9 @@ impl BridgeClient {
 
         // Czytamy DOKŁADNIE jedną linię odpowiedzi. BufReader tworzony na sklonowanym
         // uchwycie, żeby nie zjeść bajtów należących do kolejnego żądania.
-        let peer = stream.try_clone().map_err(|e| format!("klon gniazda: {e}"))?;
+        let peer = stream
+            .try_clone()
+            .map_err(|e| format!("klon gniazda: {e}"))?;
         let mut reader = BufReader::new(peer);
         let mut resp = String::new();
         let n = reader

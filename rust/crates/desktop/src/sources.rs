@@ -87,7 +87,10 @@ mod tests {
 
     #[test]
     fn catalog_parses_and_is_not_empty() {
-        assert!(!all(Lang::Pl).is_empty(), "katalog źródeł nie może być pusty");
+        assert!(
+            !all(Lang::Pl).is_empty(),
+            "katalog źródeł nie może być pusty"
+        );
         assert!(!all(Lang::En).is_empty());
     }
 
@@ -103,7 +106,11 @@ mod tests {
             assert_eq!(p.name, e.name);
             assert_eq!(p.author, e.author);
             // ...ale opis i licencja MUSZĄ (inaczej EN pokazywałby polski tekst).
-            assert_ne!(p.description, e.description, "{}: opis nieprzetłumaczony", p.id);
+            assert_ne!(
+                p.description, e.description,
+                "{}: opis nieprzetłumaczony",
+                p.id
+            );
             assert_ne!(p.license, e.license, "{}: licencja nieprzetłumaczona", p.id);
         }
     }

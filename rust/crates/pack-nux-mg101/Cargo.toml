@@ -10,6 +10,12 @@ mg101-core = { path = "../core" }
 mg101-device-pack-api = { path = "../device-pack-api" }
 mg101-device-link = { path = "../device-link" }
 
+[features]
+# Testy wierności vs FABRYCZNY zrzut NUX (własność producenta, poza repo). Wgraj
+# lokalnie `oracle/factory-patches.mg101patch` + `oracle/hw-factory-wire.bin`, potem:
+#   cargo test -p mg101-pack-nux-mg101 --features hardware-oracle
+hardware-oracle = []
+
 [lib]
 name = "mg101_pack_nux_mg101"
 path = "src/lib.rs"

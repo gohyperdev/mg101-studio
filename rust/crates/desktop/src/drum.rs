@@ -128,13 +128,7 @@ pub const GROUPS: &[DrumGroup] = &[
     DrumGroup {
         name: "REGGAE",
         patterns: &[
-            "Sherriff",
-            "Santeria",
-            "Reggae 3",
-            "Reggae 4",
-            "Reggae 5",
-            "Reggae 6",
-            "Reggae 7",
+            "Sherriff", "Santeria", "Reggae 3", "Reggae 4", "Reggae 5", "Reggae 6", "Reggae 7",
         ],
     },
     DrumGroup {

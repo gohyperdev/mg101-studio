@@ -1129,7 +1129,9 @@ impl<'p, S: LibraryStore> Studio<'p, S> {
             .unwrap_or_default()
             .to_string();
         let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
-            .map_err(|e| ExecError::Unsupported(format!("odczyt katalogu '{}': {e}", dir.display())))?
+            .map_err(|e| {
+                ExecError::Unsupported(format!("odczyt katalogu '{}': {e}", dir.display()))
+            })?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {
                 p.is_file()

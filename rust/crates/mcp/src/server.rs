@@ -51,11 +51,7 @@ impl McpServer {
     }
 
     /// Tryb mostkowy — wymaga działającej aplikacji z włączonym mostkiem.
-    pub fn bridged(
-        profile: DeviceProfile,
-        catalog: EffectCatalog,
-        client: BridgeClient,
-    ) -> Self {
+    pub fn bridged(profile: DeviceProfile, catalog: EffectCatalog, client: BridgeClient) -> Self {
         Self {
             profile: Arc::new(profile),
             catalog: Arc::new(catalog),
@@ -104,11 +100,13 @@ impl ServerHandler for McpServer {
                 website_url: None,
             },
             instructions: Some(match self.mode {
-                Mode::File => "Edycja plików .mg101patch: każde narzędzie mutujące czyta `input` i \
+                Mode::File => {
+                    "Edycja plików .mg101patch: każde narzędzie mutujące czyta `input` i \
                      zapisuje `output` (nie nadpisuje istniejącego). `inspect_patch` \
                      odczytuje plik, `list_models`/`get_profile` opisują urządzenie. \
                      UWAGA: zmiany NIE są widoczne w działającej aplikacji."
-                    .to_string(),
+                        .to_string()
+                }
                 Mode::Bridge(_) => "Edycja ŻYWEJ Biblioteki działającej aplikacji MG101 Studio — \
                      zmiany widać w UI natychmiast. Operuj na `patchID` i `expectedRevision` \
                      (rewizję bierz z `list_patches`/`get_patch`). Dostępne też zaznaczenie w GUI \

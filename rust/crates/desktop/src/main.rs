@@ -149,7 +149,7 @@ fn block_icon(block: &str) -> &'static str {
         "rvb" => "🌊",  // pogłos
         "cab" => "📦",  // kolumna/IR
         "sr" => "🔈",   // wyjście/poziom
-        _ => "🎛️",     // nieznany typ
+        _ => "🎛️",      // nieznany typ
     }
 }
 
@@ -731,7 +731,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if vm.borrow().bridge_enabled() {
         match mg101_desktop::bridge::Bridge::start() {
             Some(b) => {
-                eprintln!("Mostek MCP: 127.0.0.1:{} (token w ~/.mg101_bridge_token)", b.port);
+                eprintln!(
+                    "Mostek MCP: 127.0.0.1:{} (token w ~/.mg101_bridge_token)",
+                    b.port
+                );
                 *bridge.borrow_mut() = Some(b);
             }
             None => eprintln!("Mostek MCP: nie udało się otworzyć portu — wyłączony."),
@@ -752,18 +755,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wiadomość czekająca na klucz: agent startuje dopiero, gdy magazyn odpowie.
     let pending_run: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
-    // Zasianie Biblioteki przy pierwszym starcie (pusta) — 36 patchy fabrycznych,
-    // parytet v1. Trwałe (SqliteStore), więc dzieje się raz. Bez sprzętu.
+    // Zasianie Biblioteki przy pierwszym starcie (pusta) kilkoma GENERYCZNYMI
+    // presetami z profilu (bez danych fabrycznych producenta — te użytkownik
+    // zaciąga sam z urządzenia). Trwałe (SqliteStore), więc dzieje się raz.
     {
         let mut vmb = vm.borrow_mut();
         if vmb.library_rows().is_empty() {
-            let seed_path = data_dir.join("factory-seed.mg101patch");
-            match std::fs::write(&seed_path, mg101_pack_nux_mg101::FACTORY_PATCHES) {
-                Ok(()) => {
-                    let n = vmb.import(&seed_path.to_string_lossy());
-                    eprintln!("Biblioteka zasiana: {n} patchy fabrycznych.");
+            match mg101_pack_nux_mg101::load() {
+                Ok((profile, catalog)) => {
+                    let seed_path = data_dir.join("seed-patches.mg101patch");
+                    let seed = mg101_pack_nux_mg101::seed_patches(&profile, &catalog);
+                    match std::fs::write(&seed_path, &seed) {
+                        Ok(()) => {
+                            let n = vmb.import(&seed_path.to_string_lossy());
+                            eprintln!("Biblioteka zasiana: {n} generycznych presetów.");
+                        }
+                        Err(e) => eprintln!("Nie zasiano Biblioteki ({e}) — użyj Import."),
+                    }
                 }
-                Err(e) => eprintln!("Nie zasiano Biblioteki ({e}) — użyj Import."),
+                Err(e) => eprintln!("Nie zasiano Biblioteki (profil: {e}) — użyj Import."),
             }
         }
     }
@@ -781,8 +791,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Katalog wzorców DRUM (dwupoziomowy wybór grupa → wzorzec).
     {
         use mg101_desktop::drum;
-        let names: Vec<SharedString> =
-            drum::GROUPS.iter().map(|g| g.name.into()).collect();
+        let names: Vec<SharedString> = drum::GROUPS.iter().map(|g| g.name.into()).collect();
         let patterns: Vec<ModelRc<SharedString>> = drum::GROUPS
             .iter()
             .map(|g| {
@@ -1218,25 +1227,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- Metadane / tagi / kolekcje otwartego patcha ---
-    wire!(
-        on_save_meta,
-        |vm, author, source, url, license, notes, rating, favorite| {
-            if let Some(id) = vm.selected_id() {
-                let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
-                vm.set_meta(
-                    &id,
-                    rev,
-                    &author,
-                    &source,
-                    &url,
-                    &license,
-                    &notes,
-                    rating as i64,
-                    favorite,
-                );
-            }
+    wire!(on_save_meta, |vm,
+                         author,
+                         source,
+                         url,
+                         license,
+                         notes,
+                         rating,
+                         favorite| {
+        if let Some(id) = vm.selected_id() {
+            let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
+            vm.set_meta(
+                &id,
+                rev,
+                &author,
+                &source,
+                &url,
+                &license,
+                &notes,
+                rating as i64,
+                favorite,
+            );
         }
-    );
+    });
     wire!(on_add_tag, |vm, tag| {
         if let Some(id) = vm.selected_id() {
             let rev = vm.detail(&id).map(|d| d.revision).unwrap_or_default();
@@ -1317,7 +1330,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // lokalny Claude Code, a Bibliotekę widzi przez MCP → mostek.
             if vm.settings().backend == Backend::ClaudeCode {
                 if !vm.bridge_enabled() {
-                    let msg = mg101_desktop::i18n::tr(vm.lang(), "agent.cc_needs_bridge").to_string();
+                    let msg =
+                        mg101_desktop::i18n::tr(vm.lang(), "agent.cc_needs_bridge").to_string();
                     vm.report_error(msg);
                     refresh(&ui, &mut vm);
                     return;
@@ -1372,13 +1386,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let selftest = Timer::default();
     if let Some(msg) = std::env::var_os("MG101_AGENT_SELFTEST") {
         let uw = ui.as_weak();
-        selftest.start(TimerMode::SingleShot, Duration::from_millis(600), move || {
-            if let Some(ui) = uw.upgrade() {
-                eprintln!("[selftest] wymuszam odczyt klucza i wysyłam wiadomość");
-                ui.invoke_ensure_agent_key();
-                ui.invoke_send_message(msg.to_string_lossy().to_string().into());
-            }
-        });
+        selftest.start(
+            TimerMode::SingleShot,
+            Duration::from_millis(600),
+            move || {
+                if let Some(ui) = uw.upgrade() {
+                    eprintln!("[selftest] wymuszam odczyt klucza i wysyłam wiadomość");
+                    ui.invoke_ensure_agent_key();
+                    ui.invoke_send_message(msg.to_string_lossy().to_string().into());
+                }
+            },
+        );
     }
 
     let pump = Timer::default();

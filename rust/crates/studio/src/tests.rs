@@ -109,7 +109,11 @@ fn get_diff_is_baseline_relative_not_zero_noise() {
         .unwrap();
     let arr = d1.as_array().unwrap();
     assert!(!arr.is_empty(), "po edycji są zmiany");
-    assert!(arr.len() <= 4, "tylko bajty BPM, nie cały rekord (było {})", arr.len());
+    assert!(
+        arr.len() <= 4,
+        "tylko bajty BPM, nie cały rekord (było {})",
+        arr.len()
+    );
     assert_eq!(arr[0]["before"], 0, "baza = oryginał (0), nie śmieć");
 }
 
@@ -540,7 +544,11 @@ fn set_patch_meta_assigns_authorship_and_bumps_revision() {
     let rev = v["revision"].as_u64().unwrap();
     assert!(rev > 1, "rewizja powinna wzrosnąć");
 
-    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    let p = s
+        .execute(&Command::GetPatch {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
     assert_eq!(p["meta"]["author"], "Jimmy Lin");
     assert_eq!(p["meta"]["source"], "JL-British Pack");
     assert_eq!(p["meta"]["license"], "darmowe, bez redystrybucji");
@@ -590,7 +598,11 @@ fn set_patch_meta_only_touches_provided_fields_and_empty_string_clears() {
     .unwrap();
     let m = s.store().get(&"p1".to_string()).unwrap().meta;
     assert_eq!(m.author.as_deref(), Some("B"));
-    assert_eq!(m.notes.as_deref(), Some("notatka"), "notatka nie mogła zniknąć");
+    assert_eq!(
+        m.notes.as_deref(),
+        Some("notatka"),
+        "notatka nie mogła zniknąć"
+    );
 
     // Pusty string CZYŚCI pole (odróżnienie od „nie podano").
     let rev = s.store().get(&"p1".to_string()).unwrap().revision;
@@ -646,7 +658,11 @@ fn collections_create_assign_and_list() {
     assert_eq!(c["count"], 1);
 
     // Obie strony relacji spójne: patch wie o kolekcji.
-    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    let p = s
+        .execute(&Command::GetPatch {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
     assert_eq!(p["collections"][0], id.as_str());
 }
 
@@ -654,7 +670,9 @@ fn collections_create_assign_and_list() {
 fn deleting_collection_keeps_patches() {
     let (mut s, _p, _c) = studio_with_one();
     let id = s
-        .execute(&Command::CreateCollection { name: "Paczka".into() })
+        .execute(&Command::CreateCollection {
+            name: "Paczka".into(),
+        })
         .unwrap()["id"]
         .as_str()
         .unwrap()
@@ -665,8 +683,10 @@ fn deleting_collection_keeps_patches() {
         collection: id.clone(),
     })
     .unwrap();
-    s.execute(&Command::DeleteCollection { collection: id.clone() })
-        .unwrap();
+    s.execute(&Command::DeleteCollection {
+        collection: id.clone(),
+    })
+    .unwrap();
 
     // Patch przetrwał, tylko bez przynależności.
     let p = s.store().get(&"p1".to_string()).expect("patch musi zostać");
@@ -679,13 +699,17 @@ fn deleting_collection_keeps_patches() {
 fn duplicate_collection_names_get_unique_ids() {
     let (mut s, _p, _c) = studio_with_one();
     let a = s
-        .execute(&Command::CreateCollection { name: "Rock".into() })
+        .execute(&Command::CreateCollection {
+            name: "Rock".into(),
+        })
         .unwrap()["id"]
         .as_str()
         .unwrap()
         .to_string();
     let b = s
-        .execute(&Command::CreateCollection { name: "Rock".into() })
+        .execute(&Command::CreateCollection {
+            name: "Rock".into(),
+        })
         .unwrap()["id"]
         .as_str()
         .unwrap()
@@ -702,7 +726,11 @@ fn tags_add_and_remove() {
     })
     .unwrap();
     let rev = s.store().get(&"p1".to_string()).unwrap().revision;
-    let p = s.execute(&Command::GetPatch { patch_id: "p1".into() }).unwrap();
+    let p = s
+        .execute(&Command::GetPatch {
+            patch_id: "p1".into(),
+        })
+        .unwrap();
     assert_eq!(p["tags"][0], "metal");
 
     s.execute(&Command::RemoveTag {

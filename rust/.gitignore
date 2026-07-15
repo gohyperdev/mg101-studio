@@ -1,1 +1,6 @@
 /target
+
+# Fabryczny zrzut NUX (własność producenta) — NIE publikujemy. Wgrany lokalnie
+# włącza testy `--features hardware-oracle`. Patrz README / CONTRIBUTING.
+crates/pack-nux-mg101/oracle/factory-patches.mg101patch
+crates/pack-nux-mg101/oracle/hw-factory-wire.bin

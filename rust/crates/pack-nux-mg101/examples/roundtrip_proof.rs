@@ -1,24 +1,26 @@
-//! Dowód #3 (warunek celu): round-trip 1:1 bajt-w-bajt na REALNYM pliku
-//! `.mg101patch` (oracle Swifta). Czyta plik w runtime, dekoduje każdy rekord do
-//! modelu kanonicznego, re-enkoduje i porównuje bajt-w-bajt. Raportuje liczbę
-//! rekordów i różnice.
+//! Dowód (warunek celu): round-trip 1:1 bajt-w-bajt kodeka `.mg101patch`.
+//! Dane to syntetyczny seed generowany z profilu (bez własności producenta):
+//! dekoduje każdy rekord do modelu kanonicznego, re-enkoduje i porównuje
+//! bajt-w-bajt. Raportuje liczbę rekordów i różnice.
+//!
+//! Dowód wierności vs FABRYCZNY zrzut NUX uruchamia się osobno, po wgraniu
+//! lokalnej kopii oracle: `cargo test -p mg101-pack-nux-mg101 --features hardware-oracle`.
 //!
 //! Uruchom: `cargo run -p mg101-pack-nux-mg101 --example roundtrip_proof`
 
 use mg101_core::{canonical::CanonicalPatch, PatchRecord};
-use mg101_pack_nux_mg101::{load, Container};
+use mg101_pack_nux_mg101::{load, seed_patches, Container};
 
 fn main() {
-    let oracle_path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/oracle/factory-patches.mg101patch"
-    );
-    let data = std::fs::read(oracle_path).expect("odczyt oracle .mg101patch");
-    let (profile, _catalog) = load().expect("profil MG-101");
+    let (profile, catalog) = load().expect("profil MG-101");
+    let data = seed_patches(&profile, &catalog);
 
-    println!("Oracle: {oracle_path}");
     println!(
-        "Rozmiar pliku: {} B, rozmiar rekordu: {} B",
+        "Dane: syntetyczny seed ({} presetów)",
+        data.len() / profile.record_size
+    );
+    println!(
+        "Rozmiar danych: {} B, rozmiar rekordu: {} B",
         data.len(),
         profile.record_size
     );

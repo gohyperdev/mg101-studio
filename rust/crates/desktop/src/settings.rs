@@ -195,7 +195,11 @@ mod tests {
 
     #[test]
     fn backend_index_roundtrips() {
-        for b in [Backend::Anthropic, Backend::OpenAiCompatible, Backend::ClaudeCode] {
+        for b in [
+            Backend::Anthropic,
+            Backend::OpenAiCompatible,
+            Backend::ClaudeCode,
+        ] {
             assert_eq!(Backend::from_index(b.as_index()), b);
         }
     }

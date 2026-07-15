@@ -179,7 +179,11 @@ pub fn describe(status: Option<&BridgeStatus>, lang: crate::Lang) -> (String, St
         s.requests
     );
     if let Some((tool, ago)) = &s.last_tool {
-        detail.push_str(&format!(" · {} {tool} ({ago} {})", t("mcp.last"), t("mcp.ago")));
+        detail.push_str(&format!(
+            " · {} {tool} ({ago} {})",
+            t("mcp.last"),
+            t("mcp.ago")
+        ));
     }
     // Odrzucenia pokazujemy TYLKO, gdy wystąpiły — to sygnał, że ktoś puka bez tokenu.
     if s.rejected > 0 {
@@ -353,7 +357,10 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert_eq!(v["error"], "zły token");
         // Kluczowe: żądanie z błędnym tokenem NIE dociera do Studio.
-        assert!(rx.try_recv().is_err(), "żądanie nie może trafić do aplikacji");
+        assert!(
+            rx.try_recv().is_err(),
+            "żądanie nie może trafić do aplikacji"
+        );
     }
 
     #[test]
@@ -364,7 +371,12 @@ mod tests {
         record(&stats, r#"{"token":"t","tool":"set_bpm"}"#, &ok);
         assert_eq!(stats.requests.load(Ordering::Relaxed), 2);
         assert_eq!(stats.rejected.load(Ordering::Relaxed), 0);
-        let (tool, _) = stats.last.lock().unwrap().clone().expect("ostatnie narzędzie");
+        let (tool, _) = stats
+            .last
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("ostatnie narzędzie");
         assert_eq!(tool, "set_bpm", "status ma pokazywać NAJNOWSZE wywołanie");
     }
 
@@ -376,7 +388,10 @@ mod tests {
         record(&stats, r#"{"token":"zly","tool":"set_bpm"}"#, &denied);
         assert_eq!(stats.rejected.load(Ordering::Relaxed), 1);
         assert_eq!(stats.requests.load(Ordering::Relaxed), 0);
-        assert!(stats.last.lock().unwrap().is_none(), "odrzucone nie jest ostatnim narzędziem");
+        assert!(
+            stats.last.lock().unwrap().is_none(),
+            "odrzucone nie jest ostatnim narzędziem"
+        );
     }
 
     #[test]
@@ -384,7 +399,10 @@ mod tests {
         use crate::Lang;
         let (head, detail) = describe(None, Lang::Pl);
         assert!(head.contains("wyłączony"), "{head}");
-        assert!(!detail.is_empty(), "wyłączony mostek musi mówić, jak go włączyć");
+        assert!(
+            !detail.is_empty(),
+            "wyłączony mostek musi mówić, jak go włączyć"
+        );
 
         let idle = BridgeStatus {
             port: 10101,
@@ -405,8 +423,14 @@ mod tests {
             last_tool: Some(("set_bpm".into(), 3)),
         };
         let (head, detail) = describe(Some(&busy), Lang::Pl);
-        assert!(head.contains("(2)"), "nagłówek ma pokazać liczbę klientów: {head}");
-        assert!(detail.contains("set_bpm") && detail.contains("3"), "{detail}");
+        assert!(
+            head.contains("(2)"),
+            "nagłówek ma pokazać liczbę klientów: {head}"
+        );
+        assert!(
+            detail.contains("set_bpm") && detail.contains("3"),
+            "{detail}"
+        );
     }
 
     #[test]
@@ -437,14 +461,21 @@ mod tests {
             let _g = ClientGuard(stats.clone());
             assert_eq!(stats.clients.load(Ordering::Relaxed), 1);
         }
-        assert_eq!(stats.clients.load(Ordering::Relaxed), 0, "rozłączenie musi zdjąć klienta");
+        assert_eq!(
+            stats.clients.load(Ordering::Relaxed),
+            0,
+            "rozłączenie musi zdjąć klienta"
+        );
     }
 
     #[test]
     fn malformed_input_does_not_panic() {
         let (tx, _rx) = channel::<BridgeRequest>();
         assert_eq!(handle_line("nie-json", &tx, "t")["ok"], false);
-        assert_eq!(handle_line(r#"{"token":"t"}"#, &tx, "t")["error"], "brak pola 'tool'");
+        assert_eq!(
+            handle_line(r#"{"token":"t"}"#, &tx, "t")["error"],
+            "brak pola 'tool'"
+        );
     }
 
     #[test]

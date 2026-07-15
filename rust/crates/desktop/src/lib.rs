@@ -24,8 +24,8 @@ pub mod claude_code;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bridge;
 pub mod device;
-pub mod settings;
 pub mod drum;
+pub mod settings;
 pub mod sources;
 
 pub use i18n::{tr, Lang};

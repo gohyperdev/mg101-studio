@@ -4,7 +4,7 @@
 > nowej wersji. Bazuje na: [ADR-0002](../adr/0002-rust-core-device-packs.md),
 > [ADR-0001](../adr/0001-agent-tool-registry.md),
 > [HLD Biblioteka/urządzenie/transfer](hld-library-device-sync.md),
-> [HLD SaaS](hld-saas-platform.md) oraz na empirii sprzętowej
+> HLD SaaS (wewnętrzny) oraz na empirii sprzętowej
 > `nux/mg101-probe/docs/findings.md` (zdekodowany protokół MG-101).
 
 ## 1. Cel i definicja sukcesu

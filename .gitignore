@@ -5,3 +5,10 @@ dist/
 **/.DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Dokumenty wewnętrzne / notatki — poza publicznym repo.
+docs/architecture/hld-saas-platform.md
+rust/BACKLOG.md
+
+# Fabryczny zrzut NUX w archiwum Swift (własność producenta) — nie publikujemy.
+archive/swift-v1/Sources/MG101Core/Resources/factory-patches.mg101patch

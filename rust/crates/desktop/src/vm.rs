@@ -913,10 +913,7 @@ fn meta_from_json(v: &Value) -> MetaRow {
         license: s(&m, "license"),
         notes: s(&m, "notes"),
         rating: m.get("rating").and_then(Value::as_i64).unwrap_or(0),
-        favorite: m
-            .get("favorite")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        favorite: m.get("favorite").and_then(Value::as_bool).unwrap_or(false),
         tags: list("tags"),
         collections: list("collections"),
     }
@@ -1131,14 +1128,16 @@ mod tests {
     #[test]
     fn open_device_patch_gives_editable_detail() {
         let mut vm = vm();
-        // Realny rekord plikowy (pierwszy patch fabryczny z pakietu, 8402 B).
-        let record = mg101_pack_nux_mg101::FACTORY_PATCHES[..8402].to_vec();
+        // Poprawny rekord plikowy 8402 B (pierwszy generyczny preset seedowy).
+        let (profile, catalog) = mg101_pack_nux_mg101::load().unwrap();
+        let seed = mg101_pack_nux_mg101::seed_patches(&profile, &catalog);
+        let record = seed[..profile.record_size].to_vec();
         let id = vm
-            .open_device_patch("device-factory-0", "EuroLead", record)
+            .open_device_patch("device-factory-0", "Init Clean", record)
             .expect("otwarcie slotu");
         // Szczegóły: pełny łańcuch 11 bloków.
         let d = vm.detail(&id).expect("szczegóły patcha z urządzenia");
-        assert_eq!(d.name, "EuroLead");
+        assert_eq!(d.name, "Init Clean");
         assert_eq!(d.blocks.len(), 11);
         // Idempotencja: ponowne otwarcie nie dubluje (ta sama liczba patchy).
         let before = vm.library_rows().len();
@@ -1368,7 +1367,7 @@ mod tests {
         let n = vm.import(path.to_str().unwrap());
         assert_eq!(n, 2);
         assert_eq!(vm.library_rows().len(), 4); // 2 startowe + 2 zaimportowane
-        // Ponowny import tego samego pliku jest idempotentny (ID = hash treści).
+                                                // Ponowny import tego samego pliku jest idempotentny (ID = hash treści).
         let n2 = vm.import(path.to_str().unwrap());
         assert_eq!(n2, 2, "import zwraca liczbę rekordów w pliku");
         assert_eq!(vm.library_rows().len(), 4, "brak duplikatów po re-imporcie");

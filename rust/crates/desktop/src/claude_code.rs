@@ -106,7 +106,11 @@ impl ClaudeCodeRunner {
 
             let dbg = std::env::var_os("MG101_AGENT_DEBUG").is_some();
             if dbg {
-                eprintln!("[cc] {} -p … --mcp-config {}", opts.claude_bin, cfg.display());
+                eprintln!(
+                    "[cc] {} -p … --mcp-config {}",
+                    opts.claude_bin,
+                    cfg.display()
+                );
             }
 
             let mut child = match cmd.spawn() {
@@ -324,7 +328,8 @@ mod tests {
     #[test]
     fn error_result_becomes_error_not_empty_answer() {
         // Regresja: `is_error` bez tekstu nie może przejść jako pusta odpowiedź agenta.
-        let l = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}"#;
+        let l =
+            r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}"#;
         match parse_line(l) {
             Some(CcEvent::Error(e)) => assert!(e.contains("error_during_execution"), "{e}"),
             other => panic!("oczekiwano błędu, jest {other:?}"),

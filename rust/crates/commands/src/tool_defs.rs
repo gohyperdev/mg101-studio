@@ -418,10 +418,7 @@ impl ToolDefinition {
             t.push(ToolDefinition::new(
                 "drum_set_volume",
                 "Ustawia głośność perkusji (0–100) na żywo na urządzeniu.",
-                schema(
-                    json!({"value": int_prop("Głośność 0–100.")}),
-                    &["value"],
-                ),
+                schema(json!({"value": int_prop("Głośność 0–100.")}), &["value"]),
                 Kind::Write,
             ));
             t.push(ToolDefinition::new(

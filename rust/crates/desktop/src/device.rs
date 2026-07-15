@@ -264,9 +264,7 @@ impl PresetSync {
     /// Edycja na żywo: wysyła Control Change `B0 <cc> <value>` na urządzenie, by
     /// natychmiast zmienić brzmienie aktualnie aktywnego presetu (mapa CC katalogu).
     pub fn send_cc(&self, cc: u8, value: u8) {
-        let _ = self
-            .cmd_tx
-            .send(vec![0xB0, cc & 0x7F, value.min(127)]);
+        let _ = self.cmd_tx.send(vec![0xB0, cc & 0x7F, value.min(127)]);
     }
 
     /// Wysyła surowy komunikat (np. ramkę SysEx tempa DRUM) bez modyfikacji.
